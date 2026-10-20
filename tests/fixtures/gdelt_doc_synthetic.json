@@ -1,0 +1,18 @@
+{
+  "articles": [
+    {
+      "title": "Syntetyczny komunikat: rada testowa zatwierdza plan ćwiczeń",
+      "url": "https://example.test/pl/wiadomosc/alpha#sekcja",
+      "seendate": "20261019T120000Z",
+      "language": "Polish",
+      "sourcecountry": "Synthetic country label"
+    },
+    {
+      "title": "Synthetic notice: sample committee schedules a meeting",
+      "url": "https://example.test/en/story/beta",
+      "seendate": "20261019T121500Z",
+      "language": "English",
+      "sourcecountry": "ZZ"
+    }
+  ]
+}
