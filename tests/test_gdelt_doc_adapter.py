@@ -122,6 +122,53 @@ class GDELTDocAdapterTests(unittest.TestCase):
         self.assertEqual(origin["language"], "Polish")
         self.assertEqual(origin["last_seen_at"], "2026-10-20T10:01:00.000000Z")
 
+    def test_later_sqlite_insert_failure_rolls_back_entire_batch(self):
+        # The second article fails after the first INSERT would otherwise
+        # commit, leaving a false failed run with visible partial events.
+        self.connection.execute(
+            """CREATE TRIGGER fail_second_gdelt_insert
+               BEFORE INSERT ON events
+               WHEN NEW.title LIKE 'Synthetic notice:%'
+               BEGIN SELECT RAISE(FAIL, 'synthetic second-event failure'); END"""
+        )
+        with self.assertRaisesRegex(GDELTDocError, "could not be stored"):
+            ingest_payload(
+                self.connection, self.payload, collected_at="2026-10-20T10:00:00Z"
+            )
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM events").fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM event_sources").fetchone()[0], 0
+        )
+        run = self.connection.execute(
+            "SELECT status, items_seen, items_inserted FROM ingest_runs"
+        ).fetchone()
+        self.assertEqual(tuple(run), ("failed", 0, 0))
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT status FROM sources WHERE id=?", (SOURCE_ID,)
+            ).fetchone()[0],
+            "failed",
+        )
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_ingest_rejects_caller_owned_transaction_without_changes(self):
+        self.connection.execute("BEGIN")
+        try:
+            with self.assertRaisesRegex(GDELTDocError, "caller-owned"):
+                ingest_payload(
+                    self.connection, self.payload,
+                    collected_at="2026-10-20T10:00:00Z"
+                )
+            self.assertEqual(
+                self.connection.execute("SELECT count(*) FROM ingest_runs").fetchone()[0],
+                0,
+            )
+            self.assertTrue(self.connection.in_transaction)
+        finally:
+            self.connection.rollback()
+
     def test_malformed_and_all_invalid_payloads_fail_run_not_empty(self):
         broken = (
             "{bad json",
