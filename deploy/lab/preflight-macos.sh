@@ -26,6 +26,15 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 2
 fi
 echo "Docker CLI:"
+case "${DOCKER_HOST:-}" in
+    ""|unix://*) : ;;
+    *) echo "STOP: Docker HOST is remote. Choose a local Docker Desktop context."; exit 2 ;;
+esac
+context_host=$(docker context inspect --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null || true)
+case "$context_host" in
+    unix://*) echo "Docker endpoint type: local Unix socket" ;;
+    *) echo "STOP: Docker context is not a local Unix socket."; exit 2 ;;
+esac
 docker version --format 'Client {{.Client.Version}}' 2>/dev/null || true
 if ! docker info --format 'Engine {{.ServerVersion}} / {{.OSType}}/{{.Architecture}} / CPUs {{.NCPU}}' 2>/dev/null; then
     echo "STOP: Docker engine unavailable."
@@ -56,7 +65,7 @@ if docker ps --filter label=com.docker.compose.project=horizont-lab --format '{{
 fi
 echo "Unique Docker project: no currently running containers detected"
 
-if ! docker compose -f deploy/lab/compose.yaml config --quiet; then
+if ! docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml config --quiet; then
     echo "STOP: Docker Compose configuration rejected."
     exit 2
 fi
