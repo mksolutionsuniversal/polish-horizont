@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr
+import io
 import json
 from pathlib import Path
 import socket
@@ -81,8 +83,12 @@ class ApiStalledSocketTests(unittest.TestCase):
         blocker.sendall(b"GET /health HTTP/1.1\r\nHost: test\r\n")
         time.sleep(0.12)
         self.assertEqual(self._read("/health")[0], 200)
-        time.sleep(0.9)  # more than short test-only socket timeout
-        self.assertEqual(self._read("/health")[0], 200)
+        # Expected client timeout must not dump Python traceback into logs.
+        error_stream = io.StringIO()
+        with redirect_stderr(error_stream):
+            time.sleep(0.9)  # more than short test-only socket timeout
+            self.assertEqual(self._read("/health")[0], 200)
+        self.assertNotIn("Traceback", error_stream.getvalue())
 
     def test_concurrent_connection_count_is_bounded(self):
         self.assertEqual(MAX_ACTIVE_CONNECTIONS, 8)
