@@ -4,10 +4,12 @@ from dataclasses import replace
 from pathlib import Path
 import hashlib
 import io
+import os
 import sys
 import tempfile
 import unittest
 from zipfile import ZipFile, ZIP_DEFLATED
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -174,6 +176,31 @@ class GDELTRawZipTests(unittest.TestCase):
         symlink.symlink_to(self.path)
         with self.assertRaisesRegex(GDELTRawError, "regular local file"):
             parse_zip_rows(symlink, entry)
+
+    def test_path_replacement_does_not_change_verified_zip_contents(self):
+        original_entry = self.make_zip(rows=b"original\\trow\\n")
+        alternate = Path(self.tmp.name) / "replacement.zip"
+        with ZipFile(alternate, "w", compression=ZIP_DEFLATED) as z:
+            z.writestr(
+                original_entry.url.rsplit("/", 1)[-1][:-4], b"tampered\\trow\\n"
+            )
+        true_zip = ZipFile
+
+        def swap_path_before_zip_opens(file, *args, **kwargs):
+            self.assertTrue(hasattr(file, "fileno"))
+            os.replace(alternate, self.path)
+            return true_zip(file, *args, **kwargs)
+
+        with patch(
+            "horizont.adapters.gdelt_raw.zipfile.ZipFile",
+            side_effect=swap_path_before_zip_opens,
+        ):
+            rows = parse_zip_rows(self.path, original_entry, expected_columns=2)
+        self.assertEqual(rows, (("original", "row"),))
+        self.assertNotEqual(
+            self.path.read_bytes(),
+            b"",
+        )
 
     def test_no_network_or_storage_dependencies(self):
         import inspect
