@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
+import os
 from pathlib import Path
 import re
 import stat
@@ -168,56 +169,65 @@ def parse_zip_rows(
     ):
         raise GDELTRawError("invalid expected column count")
     path = Path(archive_path)
-    if path.is_symlink() or not path.is_file():
-        raise GDELTRawError("archive must be an existing regular local file")
-    if path.stat().st_size != entry.compressed_bytes:
-        raise GDELTRawError("ZIP byte count differs from manifest")
-    if path.stat().st_size > MAX_ARCHIVE_BYTES:
-        raise GDELTRawError("ZIP exceeds compressed size limit")
-    md5 = hashlib.md5(usedforsecurity=False)
-    with path.open("rb") as handle:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise GDELTRawError("archive must be an existing regular local file") from exc
+    rows: list[tuple[str, ...]] = []
+    with os.fdopen(fd, "rb") as handle:
+        meta = os.fstat(handle.fileno())
+        if not stat.S_ISREG(meta.st_mode):
+            raise GDELTRawError("archive must be an existing regular local file")
+        if meta.st_size != entry.compressed_bytes:
+            raise GDELTRawError("ZIP byte count differs from manifest")
+        if meta.st_size > MAX_ARCHIVE_BYTES:
+            raise GDELTRawError("ZIP exceeds compressed size limit")
+        md5 = hashlib.md5(usedforsecurity=False)
         while chunk := handle.read(65536):
             md5.update(chunk)
-    if md5.hexdigest() != entry.md5_hex:
-        raise GDELTRawError("ZIP MD5 mismatch (integrity, not authenticity)")
-    expected_name = entry.url.rsplit("/", 1)[-1][:-4]
-    rows: list[tuple[str, ...]] = []
-    try:
-        with zipfile.ZipFile(path, "r") as archive:
-            members = archive.infolist()
-            if len(members) != 1:
-                raise GDELTRawError("archive must have exactly one member")
-            member = members[0]
-            if (
-                member.filename != expected_name
-                or member.is_dir()
-                or stat.S_ISLNK(member.external_attr >> 16)
-                or member.flag_bits & 1
-                or member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
-            ):
-                raise GDELTRawError("unsafe ZIP member name or metadata")
-            if member.file_size > max_uncompressed_bytes:
-                raise GDELTRawError("ZIP expands beyond declared byte budget")
-            if member.file_size > MAX_COMPRESSION_RATIO * max(1, member.compress_size):
-                raise GDELTRawError("ZIP compression ratio exceeds safety budget")
-            total = 0
-            with archive.open(member, "r") as raw:
-                while line := raw.readline(MAX_LINE_BYTES + 1):
-                    total += len(line)
-                    if len(line) > MAX_LINE_BYTES or total > max_uncompressed_bytes:
-                        raise GDELTRawError("ZIP line or decompressed byte limit exceeded")
-                    if len(rows) >= max_rows:
-                        raise GDELTRawError("ZIP row limit exceeded")
-                    try:
-                        text = line.rstrip(b"\r\n").decode("utf-8")
-                    except UnicodeDecodeError as exc:
-                        raise GDELTRawError("ZIP contains invalid UTF-8") from exc
-                    fields = tuple(text.split("\t"))
-                    if not text or len(fields) > 80:
-                        raise GDELTRawError("ZIP has invalid tab-delimited row")
-                    if expected_columns is not None and len(fields) != expected_columns:
-                        raise GDELTRawError("ZIP row has incorrect number of columns")
-                    rows.append(fields)
-    except (zipfile.BadZipFile, EOFError, RuntimeError, OSError) as exc:
-        raise GDELTRawError("ZIP archive is corrupt or cannot be decoded") from exc
+        if md5.hexdigest() != entry.md5_hex:
+            raise GDELTRawError("ZIP MD5 mismatch (integrity, not authenticity)")
+        handle.seek(0)
+        expected_name = entry.url.rsplit("/", 1)[-1][:-4]
+        try:
+            # Keep the same validated descriptor: never reopen the pathname
+            # between checksum verification and ZIP parsing (TOCTOU).
+            with zipfile.ZipFile(handle, "r") as archive:
+                members = archive.infolist()
+                if len(members) != 1:
+                    raise GDELTRawError("archive must have exactly one member")
+                member = members[0]
+                if (
+                    member.filename != expected_name
+                    or member.is_dir()
+                    or stat.S_ISLNK(member.external_attr >> 16)
+                    or member.flag_bits & 1
+                    or member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+                ):
+                    raise GDELTRawError("unsafe ZIP member name or metadata")
+                if member.file_size > max_uncompressed_bytes:
+                    raise GDELTRawError("ZIP expands beyond declared byte budget")
+                if member.file_size > MAX_COMPRESSION_RATIO * max(1, member.compress_size):
+                    raise GDELTRawError("ZIP compression ratio exceeds safety budget")
+                total = 0
+                with archive.open(member, "r") as raw:
+                    while line := raw.readline(MAX_LINE_BYTES + 1):
+                        total += len(line)
+                        if len(line) > MAX_LINE_BYTES or total > max_uncompressed_bytes:
+                            raise GDELTRawError("ZIP line or decompressed byte limit exceeded")
+                        if len(rows) >= max_rows:
+                            raise GDELTRawError("ZIP row limit exceeded")
+                        try:
+                            decoded = line.rstrip(b"\r\n").decode("utf-8")
+                        except UnicodeDecodeError as exc:
+                            raise GDELTRawError("ZIP contains invalid UTF-8") from exc
+                        fields = tuple(decoded.split("\t"))
+                        if not decoded or len(fields) > 80:
+                            raise GDELTRawError("ZIP has invalid tab-delimited row")
+                        if expected_columns is not None and len(fields) != expected_columns:
+                            raise GDELTRawError("ZIP row has incorrect number of columns")
+                        rows.append(fields)
+        except (zipfile.BadZipFile, EOFError, RuntimeError, OSError) as exc:
+            raise GDELTRawError("ZIP archive is corrupt or cannot be decoded") from exc
     return tuple(rows)
