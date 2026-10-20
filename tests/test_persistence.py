@@ -81,6 +81,8 @@ class SQLitePersistenceTests(unittest.TestCase):
         writer, event_id = self._seed()
         try:
             self.assertEqual(writer.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            with self.assertRaisesRegex(ValueError, "self-contained"):
+                verify_existing(self.db)
             # Leave writer OPEN; this read must see committed events still in WAL.
             backup = self.root / "snapshot.sqlite"
             result = backup_live(self.db, backup)
