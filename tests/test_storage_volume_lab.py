@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from horizont.core.db import add_event
-from horizont.core.lab_storage.operations import (
+from horizont.lab_storage.operations import (
     VolumePaths, _exclusive_writer, _primary_connection,
     restore_action, summary, writer_action,
 )
