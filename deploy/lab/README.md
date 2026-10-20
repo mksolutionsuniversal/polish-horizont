@@ -20,14 +20,16 @@ This displays only OS/Docker versions, architecture, available RAM/disk, checks 
 
 **Before running `up`:** privately record current health/latency of all important services running on this Mac, assess Docker VM memory and disk settings, and arrange/verify recoverable backup of **only HORIZONT-created assets**. Ensure the machine can run containers alongside existing workloads without unacceptable pressure. Do not share private operational logs in a public issue or PR.
 
-If port 15480 is in use, choose another unused unprivileged port locally, for example `HORIZONT_LAB_PORT=15481`, and rerun preflight. Only host address **127.0.0.1** is published. This first preview has no persistent volumes, databases, secrets, external requests or authentication service.
+If port 15480 is in use, choose another unused unprivileged port locally, for example `HORIZONT_LAB_PORT=15481`, and rerun preflight. Every Compose operation is explicitly scoped with `-p horizont-lab` so a shell `COMPOSE_PROJECT_NAME` cannot point to another project, and `--env-file /dev/null` disables automatic repository `.env` overrides. The optional exported `HORIZONT_LAB_PORT` still works, but it must be used consistently for preflight, launch, and the browser address. Check the selected Docker context is a **local Unix socket** (preflight rejects remote contexts).
+
+Only host address **127.0.0.1** is published. This first preview has no persistent volumes, databases, secrets, external requests or authentication service.
 
 ## 1. Manual first launch — only after preflight is satisfactory
 
 ```sh
-docker compose -f deploy/lab/compose.yaml config --quiet
-docker compose -f deploy/lab/compose.yaml up -d --build preview
-docker compose -f deploy/lab/compose.yaml ps
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml config --quiet
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml up -d --build preview
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml ps
 ```
 
 Browse `http://127.0.0.1:15480/` on this machine. You should see the same PL/EN synthetic preview as opening `preview/index.html` locally. Check that PL/EN toggles and time filters work; this does not establish compatibility with a real SQLite-backed API.
@@ -48,7 +50,7 @@ If a different port was selected, prefix all relevant commands with the same `HO
 ## 3. Rollback — does not destroy unrelated service data
 
 ```sh
-docker compose -f deploy/lab/compose.yaml down
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml down
 ```
 
 This stops/removes **only** the containers and private network belonging to the explicit `horizont-lab` project. Do **not** run `docker system prune`, `docker volume prune`, `down -v`, or delete unknown anonymous volumes. The first preview service has no persistent data to restore; future SQLite LABs must add separate volume backup/restore tests before starting.
