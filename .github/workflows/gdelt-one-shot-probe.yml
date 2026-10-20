@@ -1,0 +1,97 @@
+name: GDELT one-shot research probe (temporary)
+
+on:
+  pull_request:
+    types: [opened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.event.pull_request.head.ref == 'probe/gdelt-doc-once-20261020' && github.event.pull_request.head.repo.full_name == 'mksolutionsuniversal/polish-horizont'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout for offline adapter import
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exactly one bounded HTTPS request; print schema observations only
+        env:
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          import json
+          import socket
+          import urllib.error
+          import urllib.request
+          from urllib.parse import urlsplit
+          from horizont.adapters.gdelt_doc import build_search_url, normalize_response, GDELTDocError
+
+          url = build_search_url(
+              'Poland', '2026-10-20T12:00:00Z', '2026-10-20T14:00:00Z', max_records=5
+          )
+          host = urlsplit(url).hostname
+          if host != 'api.gdeltproject.org':
+              raise SystemExit('GATE_ABORT: unexpected host')
+          try:
+              resolved = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+              print('DNS: OK; records:', len(resolved))
+          except OSError as exc:
+              print('DNS: BLOCKED;', type(exc).__name__)
+              raise SystemExit(3)
+
+          class RejectRedirects(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise RuntimeError('redirect blocked')
+
+          opener = urllib.request.build_opener(RejectRedirects())
+          request = urllib.request.Request(url, headers={
+              'Accept': 'application/json',
+              'User-Agent': 'POLISH-HORIZONT-research-one-shot/0.1'
+          })
+          print('HTTP: one-shot attempt, maxrecords=5, no redirect/retry')
+          try:
+              with opener.open(request, timeout=12) as response:
+                  status = response.status
+                  ctype = response.headers.get('Content-Type', 'missing')
+                  content = response.read(131073)
+          except urllib.error.HTTPError as exc:
+              print('HTTP_ERROR:', exc.code)
+              raise SystemExit(4)
+          except (urllib.error.URLError, TimeoutError, RuntimeError, OSError) as exc:
+              print('TRANSPORT_ERROR:', type(exc).__name__)
+              raise SystemExit(5)
+          print('HTTP_STATUS:', status)
+          print('CONTENT_TYPE:', ctype.split(';')[0].lower())
+          print('BODY_BYTES:', len(content))
+          if len(content) > 131072:
+              print('GATE_ABORT: response exceeds 128KiB')
+              raise SystemExit(6)
+          try:
+              payload = json.loads(content)
+          except (json.JSONDecodeError, UnicodeDecodeError):
+              print('BODY_TYPE: non-JSON')
+              raise SystemExit(7)
+          if not isinstance(payload, dict):
+              print('BODY_TYPE: JSON-not-object')
+              raise SystemExit(8)
+          print('TOP_LEVEL_KEYS:', ','.join(sorted(map(str, payload.keys()))))
+          records = payload.get('articles')
+          print('ARTICLES_TYPE:', type(records).__name__)
+          if isinstance(records, list):
+              print('ARTICLES_COUNT:', len(records))
+              if records and isinstance(records[0], dict):
+                  print('FIRST_ARTICLE_KEYS:', ','.join(sorted(map(str, records[0].keys()))))
+          try:
+              batch = normalize_response(payload, max_records=5)
+          except (GDELTDocError, ValueError) as exc:
+              print('ADAPTER_VALIDATION: FAILED;', type(exc).__name__)
+              raise SystemExit(9)
+          print('ADAPTER_VALIDATION: PASS')
+          print('NORMALIZED_COUNT:', len(batch.articles))
+          print('SEENDATE_PRESENT_COUNT:', sum(a.gdelt_seen_at is not None for a in batch.articles))
+          print('TRUNCATED_FLAG:', batch.possibly_truncated)
+          PY
