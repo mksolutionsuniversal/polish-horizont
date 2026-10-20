@@ -293,11 +293,27 @@ def add_event(
                 event_id,source_id,ingest_run_id,original_url,language,country,first_seen_at,last_seen_at
             ) VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(event_id,source_id) DO UPDATE SET
-                ingest_run_id=excluded.ingest_run_id,
-                original_url=excluded.original_url,
-                language=excluded.language,
-                country=excluded.country,
-                last_seen_at=excluded.last_seen_at""",
+                first_seen_at=MIN(event_sources.first_seen_at, excluded.first_seen_at),
+                last_seen_at=MAX(event_sources.last_seen_at, excluded.last_seen_at),
+                ingest_run_id=CASE
+                    WHEN excluded.last_seen_at > event_sources.last_seen_at
+                    THEN COALESCE(excluded.ingest_run_id, event_sources.ingest_run_id)
+                    ELSE event_sources.ingest_run_id
+                END,
+                original_url=CASE
+                    WHEN excluded.last_seen_at > event_sources.last_seen_at THEN excluded.original_url
+                    ELSE event_sources.original_url
+                END,
+                language=CASE
+                    WHEN excluded.last_seen_at > event_sources.last_seen_at
+                    THEN COALESCE(excluded.language, event_sources.language)
+                    ELSE event_sources.language
+                END,
+                country=CASE
+                    WHEN excluded.last_seen_at > event_sources.last_seen_at
+                    THEN COALESCE(excluded.country, event_sources.country)
+                    ELSE event_sources.country
+                END""",
             (event_id, source_id, ingest_run_id, original_url, language, country, collected, collected),
         )
         return event_id, inserted
