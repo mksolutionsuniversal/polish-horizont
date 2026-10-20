@@ -13,8 +13,10 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import threading
+from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs
-from wsgiref.simple_server import make_server
+from wsgiref.simple_server import make_server, WSGIServer
 
 from horizont.core.queries import (
     get_event_detail, list_recent_events, list_source_statuses, open_readonly,
@@ -33,6 +35,48 @@ EVENT_PARAMS = {"time_field", "start", "end", "source_id", "country", "limit", "
 SOURCE_PARAMS = {"limit", "offset"}
 MAX_QUERY_BYTES = 2048
 MAX_AUTH_BYTES = 2048
+# A client that sends incomplete headers must not monopolize the entire API.
+# This remains a small, localhost-only laboratory server, not production HTTP.
+MAX_ACTIVE_CONNECTIONS = 8
+SOCKET_TIMEOUT_SECONDS = 5.0
+
+
+class BoundedThreadingWSGIServer(ThreadingMixIn, WSGIServer):
+    """Bounded concurrent WSGI server; idle/incomplete clients time out.
+
+    ThreadingMixIn alone creates unbounded request threads, so reject excess
+    connections before spawning. The waiting queue is also bounded by the OS.
+    """
+
+    daemon_threads = True
+    block_on_close = False
+    request_queue_size = 16
+    socket_timeout_seconds = SOCKET_TIMEOUT_SECONDS
+
+    def __init__(self, *args, **kwargs):
+        self._connection_slots = threading.BoundedSemaphore(MAX_ACTIVE_CONNECTIONS)
+        super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        sock, address = super().get_request()
+        sock.settimeout(self.socket_timeout_seconds)
+        return sock, address
+
+    def process_request(self, request, client_address):
+        if not self._connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._connection_slots.release()
 
 
 def _number(value: str | None, default: int, minimum: int, maximum: int) -> int:
@@ -165,8 +209,8 @@ def main() -> None:
         raise SystemExit("Refusing startup: invalid API bind address")
     # 0.0.0.0 is only appropriate *inside* a separately reviewed container
     # with host port bound to 127.0.0.1 and a mandatory bearer token.
-    with make_server(bind_host, 15481, app) as server:
-        print("HORIZONT read-only API on local loopback (not a public service)")
+    with make_server(bind_host, 15481, app, server_class=BoundedThreadingWSGIServer) as server:
+        print("HORIZONT lab API listening (host exposure controlled separately by Compose)")
         server.serve_forever()
 
 
