@@ -1,0 +1,16 @@
+# Build must not include Git history, credentials, backups or private files.
+**
+!src/
+!src/horizont/
+!src/horizont/__init__.py
+!src/horizont/core/
+!src/horizont/core/__init__.py
+!src/horizont/core/db.py
+!src/horizont/core/queries.py
+!src/horizont/core/persistence.py
+!src/horizont/api/
+!src/horizont/api/__init__.py
+!src/horizont/api/readonly.py
+!src/horizont/lab_storage/
+!src/horizont/lab_storage/__init__.py
+!src/horizont/lab_storage/operations.py

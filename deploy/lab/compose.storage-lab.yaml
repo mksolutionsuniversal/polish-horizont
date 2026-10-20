@@ -1,0 +1,100 @@
+# EXPLICIT OPT-IN ONLY — fictional data, no scheduled writer or live feeds.
+# Four project-scoped named volumes; NO shared volumes with 15480/15481/15482.
+name: horizont-storage-lab
+
+services:
+  writer:
+    profiles: ["maintenance"]
+    build:
+      context: ../..
+      dockerfile: deploy/lab/Dockerfile.storage-lab
+    image: horizont-storage:lab
+    entrypoint: ["python", "-m", "horizont.lab_storage.operations"]
+    command: ["status"]
+    restart: "no"
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    network_mode: "none"
+    volumes:
+      - primary_data:/opt/horizont/state:rw
+      - read_view:/opt/horizont/view:rw
+      - offline_backup:/opt/horizont/backup:rw
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700
+
+  recovery:
+    profiles: ["maintenance"]
+    build:
+      context: ../..
+      dockerfile: deploy/lab/Dockerfile.storage-lab
+    image: horizont-storage:lab
+    entrypoint: ["python", "-m", "horizont.lab_storage.operations"]
+    command: ["restore"]
+    restart: "no"
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    network_mode: "none"
+    volumes:
+      - offline_backup:/opt/horizont/backup:ro
+      - recovered_data:/opt/horizont/recovered:rw
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700
+
+  reader:
+    profiles: ["reader"]
+    build:
+      context: ../..
+      dockerfile: deploy/lab/Dockerfile.storage-lab
+    image: horizont-storage:lab
+    entrypoint: ["python", "-m", "horizont.api.readonly"]
+    restart: "no"
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    environment:
+      HORIZONT_API_DB: /opt/horizont/view/view-v1.sqlite
+      HORIZONT_API_BIND_HOST: 0.0.0.0
+      # Missing token causes the authenticated API to fail closed at startup.
+      # The maintenance jobs do not require this environment variable.
+      HORIZONT_API_TOKEN: "${HORIZONT_STORAGE_LAB_TOKEN:-}"
+    volumes:
+      - read_view:/opt/horizont/view:ro
+    ports:
+      - "127.0.0.1:15483:15481"
+    networks: [reader_only]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:15481/health',timeout=2).close()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  reader_only:
+    # Routable project-scoped bridge needed for Docker Desktop localhost port.
+    # Egress is technically possible but API has no outbound fetch code.
+    driver: bridge
+    internal: false
+
+volumes:
+  primary_data: {}
+  read_view: {}
+  offline_backup: {}
+  recovered_data: {}
