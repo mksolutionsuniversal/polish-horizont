@@ -5,6 +5,7 @@ This module performs no network access and starts no background work.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -214,7 +215,9 @@ def finish_ingest_run(
     if status in {"failed", "unavailable"} and not error_message:
         raise ValueError("failed and unavailable runs require an error_message")
     finished = normalize_utc(finished_at or utc_now(), required=True)
-    with connection:
+    # Respect an outer transaction (for atomic multi-event imports).
+    # Standalone calls retain their previous auto-commit behavior.
+    with (nullcontext() if connection.in_transaction else connection):
         row = connection.execute(
             "SELECT source_id, started_at, status FROM ingest_runs WHERE id = ?", (run_id,)
         ).fetchone()
@@ -273,7 +276,9 @@ def add_event(
     occurred = normalize_utc(occurred_at)
     published = normalize_utc(published_at)
     created = utc_now()
-    with connection:
+    # Never commit a caller-owned transaction; the importer may roll back
+    # the entire batch on failure.
+    with (nullcontext() if connection.in_transaction else connection):
         row = connection.execute("SELECT id FROM events WHERE dedup_key=?", (dedup_key,)).fetchone()
         inserted = row is None
         if inserted:
