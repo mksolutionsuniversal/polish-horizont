@@ -137,7 +137,20 @@ jobs:
             python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["sources"]) == 2 and {s["country"] for s in d["sources"]} == {"GB","PL"}'
           # Recreate only the new reader and ensure its sealed view survives.
           docker compose --env-file /dev/null -p horizont-storage-lab -f deploy/lab/compose.storage-lab.yaml up -d --no-build --force-recreate reader
-          curl -fsS --retry 8 --retry-connrefused --retry-delay 1 --max-time 5 -H "Authorization: Bearer $HORIZONT_STORAGE_LAB_TOKEN" http://127.0.0.1:15483/api/v1/events |
+          # Docker reports "Started" before Python has necessarily bound the
+          # listener. Probe authenticated /ready until the NEW process is ready;
+          # curl --retry-connrefused does not cover all TCP reset races.
+          ready=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS --max-time 3 -H "Authorization: Bearer $HORIZONT_STORAGE_LAB_TOKEN" http://127.0.0.1:15483/ready |
+                python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "ready"' > /dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          curl -fsS --max-time 5 -H "Authorization: Bearer $HORIZONT_STORAGE_LAB_TOKEN" http://127.0.0.1:15483/api/v1/events |
             python3 -c 'import json,sys; assert len(json.load(sys.stdin)["items"]) == 2'
           # Down without -v must not delete the persisted primary and backups.
           docker compose --env-file /dev/null -p horizont-storage-lab -f deploy/lab/compose.storage-lab.yaml down
