@@ -22,7 +22,7 @@ class RepositoryGuardTests(unittest.TestCase):
                 self.assertIsNone(guard.check_path(name))
 
     def test_private_key(self):
-        self.assertEqual(guard.check_data(b"-----BEGIN OPENSSH PRIVATE KEY-----"), "private key")
+        self.assertEqual(guard.check_data(b"-----BEGIN " + b"OPENSSH PRIVATE " + b"KEY-----"), "private key")
 
     def test_regular_document(self):
         self.assertIsNone(guard.check_data(b"PUBLIC CODE ONLY - no real credentials"))
