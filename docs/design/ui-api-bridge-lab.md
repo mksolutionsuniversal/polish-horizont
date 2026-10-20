@@ -26,7 +26,7 @@ Instead of altering either already-running Compose project, add a third **opt-in
 
 ## Data contract for browser
 
-Server JSON is a **read-model**, not the raw internal database schema:
+Server JSON is a **read-model**, not the raw internal database schema. The example intentionally has **no event-level language**, because the present event table does not identify the original title language; provenance rows can carry distinct source languages:
 
 ```json
 {
@@ -36,7 +36,6 @@ Server JSON is a **read-model**, not the raw internal database schema:
     "id": "2",
     "title": "Fictional demonstration event",
     "summary": "Synthetic only — not a real incident.",
-    "source_language": "en",
     "occurred_at": null,
     "published_at": null,
     "collected_at": "2026-10-20T11:00:00.000000Z",
@@ -57,7 +56,7 @@ Server JSON is a **read-model**, not the raw internal database schema:
 }
 ```
 
-This example is illustrative only; exact keys need tests and a reviewed explicit versioned schema. Original `title`/`summary` are in their observed language: **PL/EN UI localization does NOT imply source-text translation**. To maintain clear UX, render original text in both interface locales with a source-language badge. No synthetic 'translation' that implies real source content. Render any untrusted text with `textContent`, not `innerHTML`. The current translated HTML-only interface copy is static and trusted.
+This example is illustrative only; exact keys need tests and a reviewed explicit versioned schema. Original `title`/`summary` are stored without a reliable text-language or owning-source attribution in the current SQLite schema. **PL/EN UI localization does NOT imply source-text translation**. Render the original stored text in both interface locales, label its language as *unknown/not attributed* (rather than guessing from any source), and show `language` badges **only for individual provenance rows**, where the field is actually stored. An event deduplicated across English/Polish sources must never inherit a guessed top-level `source_language`. A future explicitly attributed title/text-language field would require a separate schema/adapter review. No synthetic 'translation' that implies real source content. Render any untrusted text with `textContent`, not `innerHTML`. The current translated HTML-only interface copy is static and trusted.
 
 Server time filter semantics: UTC inclusive lower bound, exclusive upper bound. Missing timestamp remains unknown and **must not match a bounded time window**. Data endpoint `HTTP 503` must display an explicit unavailable/error notice (never `0 events`), while HTTP 200 with `items: []` represents a valid empty selection. If a previously loaded dataset is stale after failure, label it stale, never 'LIVE'.
 
