@@ -160,7 +160,12 @@ def main() -> None:
     app = create_app(database, secret)
     # Only loopback. An explicit, separately reviewed Docker configuration
     # will be required before this is ever containerized or exposed.
-    with make_server("127.0.0.1", 15481, app) as server:
+    bind_host = os.environ.get("HORIZONT_API_BIND_HOST", "127.0.0.1")
+    if bind_host not in {"127.0.0.1", "0.0.0.0"}:
+        raise SystemExit("Refusing startup: invalid API bind address")
+    # 0.0.0.0 is only appropriate *inside* a separately reviewed container
+    # with host port bound to 127.0.0.1 and a mandatory bearer token.
+    with make_server(bind_host, 15481, app) as server:
         print("HORIZONT read-only API on local loopback (not a public service)")
         server.serve_forever()
 

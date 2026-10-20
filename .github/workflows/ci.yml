@@ -44,3 +44,23 @@ jobs:
           done
           docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml ps
           exit 1
+      - name: Docker API synthetic SQLite authenticated smoke (disposable host)
+        env:
+          HORIZONT_API_TOKEN: ci-synthetic-token-only-not-a-private-key-0000001
+        run: |
+          set -eu
+          trap 'docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml down' EXIT
+          docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml config --quiet
+          docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml up -d --build api
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS --max-time 2 http://127.0.0.1:15481/health > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS --max-time 5 http://127.0.0.1:15481/health | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "running"'
+          status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:15481/api/v1/events)"
+          test "$status" = 401
+          curl -fsS --max-time 5 -H "Authorization: Bearer $HORIZONT_API_TOKEN" http://127.0.0.1:15481/api/v1/events |
+            python3 -c 'import json,sys; data=json.load(sys.stdin); assert len(data["items"]) == 2 and all(e["validation_status"] == "pending" for e in data["items"])'
+          docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml ps

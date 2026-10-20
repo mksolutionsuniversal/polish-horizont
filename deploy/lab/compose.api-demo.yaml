@@ -1,0 +1,40 @@
+# OPT-IN DEMO ONLY — separate project; never included by preview compose.
+# Authenticated fictional API data; no user DB, host mounts or credentials here.
+name: horizont-api-lab
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/lab/Dockerfile.api-demo
+    image: horizont-api:demo
+    restart: "no"
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    environment:
+      HORIZONT_API_DB: /opt/horizont/data/synthetic.sqlite
+      HORIZONT_API_BIND_HOST: 0.0.0.0
+      HORIZONT_API_TOKEN: "${HORIZONT_API_TOKEN:?set_private_demo_token}"
+    ports:
+      - "127.0.0.1:15481:15481"
+    networks:
+      - api_only
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:15481/health', timeout=2).close()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  api_only:
+    driver: bridge
+    internal: false
