@@ -149,16 +149,19 @@ def migrate(connection: sqlite3.Connection, target_version: int = SCHEMA_VERSION
     current = connection.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
     if current > target_version:
         raise ValueError(f"database schema {current} is newer than target {target_version}")
+    if connection.in_transaction:
+        raise ValueError("migrations require a connection without an active transaction")
     for version in range(current + 1, target_version + 1):
-        try:
-            with connection:
-                _MIGRATIONS[version](connection)
-                connection.execute(
-                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-                    (version, utc_now()),
-                )
-        except sqlite3.Error:
-            raise
+        with connection:
+            # sqlite3's legacy transaction mode does not implicitly BEGIN for DDL.
+            # Explicitly start a transaction so incomplete CREATE TABLE/INDEX
+            # changes roll back along with the migration-version record.
+            connection.execute("BEGIN")
+            _MIGRATIONS[version](connection)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, utc_now()),
+            )
     return target_version
 
 
