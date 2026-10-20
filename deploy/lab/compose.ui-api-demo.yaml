@@ -1,0 +1,37 @@
+# OPT-IN fictional SQLite + PL/EN same-origin demo. Independent of existing 15480/15481.
+name: horizont-ui-api-lab
+
+services:
+  ui:
+    build:
+      context: ../..
+      dockerfile: deploy/lab/Dockerfile.ui-api-demo
+    image: horizont-ui-api:demo
+    restart: "no"
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
+    ports:
+      - "127.0.0.1:15482:15482"
+    networks:
+      - ui_only
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.Request('http://127.0.0.1:15482/health',headers={'Host':'127.0.0.1:15482'}); urllib.request.urlopen(r,timeout=2).close()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  ui_only:
+    # Docker Desktop host localhost publication needs this routable bridge.
+    # Potential egress exists; application does not make outbound requests.
+    driver: bridge
+    internal: false
