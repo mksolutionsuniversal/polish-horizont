@@ -70,7 +70,7 @@ jobs:
           import urllib.request
           blocked = socket.create_connection(("127.0.0.1", 15481), timeout=2)
           try:
-              blocked.sendall(b"GET /health HTTP/1.1\\r\\nHost: test\\r\\n")
+              blocked.sendall(b"GET /health HTTP/1.1\r\nHost: test\r\n")
               time.sleep(0.3)
               with urllib.request.urlopen("http://127.0.0.1:15481/health", timeout=2) as response:
                   assert response.status == 200, response.status
