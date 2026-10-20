@@ -8,7 +8,7 @@ const copy = {
     headline: "Świat w kontekście.<br><em>Źródła na widoku.</em>", heroCopy: "Chronologia i kondycja źródeł, z wyraźnym rozdzieleniem faktów od brakujących danych.",
     snapshotLabel: "PRZYKŁADOWY ZRZUT", utcNote: "Wszystkie czasy w UTC",
     notice: "To statyczny podgląd z fikcyjnymi danymi. Nie łączy się z bazą SQLite, źródłami ani siecią. Kraje przy źródłach opisują pochodzenie, nie potwierdzoną lokalizację wydarzenia.",
-    feedEyebrow: "MONITORING", timelineTitle: "Oś wydarzeń", timeField: "Filtruj według czasu", occurred: "Czas zdarzenia", published: "Czas publikacji", collected: "Czas pobrania", fromUtc: "Od (UTC, włącznie)", beforeUtc: "Przed (UTC, bez końca)", reset: "Wyczyść", rangeHint: "Zakres [od, przed); wybrany czas pozostaje nieznany, jeśli źródło go nie podało.", emptyTitle: "Brak wpisów w tym zakresie", emptyCopy: "Zmień filtr czasu lub wyczyść zakres dat.",
+    feedEyebrow: "MONITORING", timelineTitle: "Oś wydarzeń", timeField: "Filtruj według czasu", occurred: "Czas zdarzenia", published: "Czas publikacji", collected: "Czas pobrania", fromUtc: "Od (UTC, włącznie)", beforeUtc: "Przed (UTC, wyłącznie)", reset: "Wyczyść", rangeHint: "Zakres [od, przed); wybrany czas pozostaje nieznany, jeśli źródło go nie podało.", emptyTitle: "Brak wpisów w tym zakresie", emptyCopy: "Zmień filtr czasu lub wyczyść zakres dat.",
     sourceEyebrow: "TRANSPARENTNOŚĆ", sourcesTitle: "Kondycja źródeł", sourceIntro: "Stan ostatniej próby jest oddzielony od liczby wydarzeń.", countryLegend: "Kraj przy źródle = kraj zaobserwowany w metadanych źródła. Nie potwierdza miejsca zdarzenia.", footer: "PRYWATNOŚĆ PRZEDE WSZYSTKIM · PODGLĄD LOKALNY",
     occurredLabel: "ZDARZENIE", publishedLabel: "PUBLIKACJA", collectedLabel: "POBRANO", unknown: "Nieznany", geo: "Precyzja geolokalizacji", noGeo: "Brak danych lokalizacyjnych", validation: "Walidacja", sourceObserved: "Kraj zaobserwowany przez źródło", language: "Język źródła", openSource: "Otwórz źródło (przykład)",
     statuses: {ok:"Dostępne",empty:"Pusto",stale:"Nieaktualne",failed:"Błąd pobrania",unavailable:"Niedostępne",never_run:"Nieuruchomione"}, statusDetails: {ok:"Dostępna próbka syntetyczna.",empty:"Ostatnie sprawdzenie zakończyło się poprawnie; brak wpisów.",stale:"Widoczna próbka jest oznaczona jako nieaktualna.",failed:"Pobieranie nie powiodło się; liczba wydarzeń nie jest znana.",unavailable:"Źródło jest niedostępne; nie oznacza to zera wydarzeń.",never_run:"Nie wykonano jeszcze żadnej próby."},
@@ -92,11 +92,11 @@ function filteredEvents() {
   const selected = timeField.value;
   const start = startInput.value ? Date.parse(`${startInput.value}Z`) : null;
   const end = endInput.value ? Date.parse(`${endInput.value}Z`) : null;
-  if (start !== null && end !== null && start >= end) {
-    filterMessage.textContent = text("dateRangeError");
-    return null;
-  }
-  filterMessage.textContent = "";
+  const invalidRange = start !== null && end !== null && start >= end;
+  startInput.setAttribute("aria-invalid", String(invalidRange));
+  endInput.setAttribute("aria-invalid", String(invalidRange));
+  filterMessage.textContent = invalidRange ? text("dateRangeError") : "";
+  if (invalidRange) return null;
   return fixtures.events.filter((event) => {
     const value = event[selected];
     if (value === null) return start === null && end === null;
@@ -146,6 +146,7 @@ function renderLanguage() {
   document.querySelectorAll("[data-language]").forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.language === language));
   });
+  document.getElementById("snapshot-time").textContent = displayDate(fixtures.as_of);
   renderEvents();
   renderSources();
 }
@@ -156,6 +157,5 @@ document.querySelectorAll("[data-language]").forEach((button) => {
 document.getElementById("filters").addEventListener("input", renderEvents);
 document.getElementById("filters").addEventListener("change", renderEvents);
 document.getElementById("filters").addEventListener("reset", () => setTimeout(renderEvents, 0));
-document.getElementById("snapshot-time").textContent = displayDate(fixtures.as_of);
 document.getElementById("filters").addEventListener("submit", (event) => event.preventDefault());
 renderLanguage();
