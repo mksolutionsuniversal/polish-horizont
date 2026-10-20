@@ -12,6 +12,8 @@ This document describes the local-only SQLite prototype in `src/horizont/core/`.
 
 Source states are constrained to `ok`, `empty`, `stale`, `unknown`, `failed`, `unavailable`, and `never_run`. `unavailable` means the source could not be queried; it does not mean zero events.
 
+`first_seen_at` is the minimum recorded **collection timestamp** for an event/source pair; `last_seen_at` is the maximum. Both describe when this data store recorded collection observations, not the event’s `occurred_at` or publisher’s `published_at`. This min/max rule is stable under out-of-order historical imports. A repeat with a newer collection timestamp advances `last_seen_at` and may refresh that source’s URL/language/country; an older or equal-time replay cannot replace them. A newer replay with missing optional language or country retains the last known non-null value. Provenance is current-state only; the MVP does not retain every metadata revision.
+
 ## Dates, geography and integrity
 
 Write helpers accept offset-aware ISO-8601 timestamps and normalize them to UTC (`Z`). Naive datetimes are rejected to avoid silently guessing a timezone. Missing event and publication dates remain SQL `NULL`; collection time is mandatory. SQLite stores these normalized strings for sortable UTC chronology.
@@ -32,7 +34,7 @@ For a future local read-only MCP/query process, open the database with SQLite UR
 
 Rollback is to remove this prototype’s imports/call sites and the additive `src/horizont/core/`, `tests/test_sqlite_core.py`, and this document from the feature branch. No existing database is migrated or created by repository checks. If a later local prototype database is created, stop its caller, preserve a copy for review, and remove only that explicitly identified local test database; this PR creates none.
 
-Independent verification uses only Python’s standard library and synthetic event/source values: `python3 -m unittest discover -s tests -v`. Tests cover incremental/idempotent migration, UTC normalization and missing dates, deduplication across sources, provenance, null geolocation, constraints/foreign keys, source-state values, failed/unavailable/empty run distinctions, error handling, and WAL on a temporary file. Repository CI remains unchanged and runs its existing hygiene check and unittest suite on GitHub-hosted runners.
+Independent verification uses only Python’s standard library and synthetic event/source values: `python3 -m unittest discover -s tests -v`. Tests cover incremental/idempotent migration, UTC normalization and missing dates, deduplication across sources, out-of-order re-import bounds and metadata, provenance rollback, null geolocation, constraints/foreign keys, source-state values, failed/unavailable/empty run distinctions, error handling, and WAL on a temporary file. Repository CI remains unchanged and runs its existing hygiene check and unittest suite on GitHub-hosted runners.
 
 ## MVP limits
 

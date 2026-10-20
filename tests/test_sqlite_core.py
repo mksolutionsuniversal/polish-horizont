@@ -89,6 +89,71 @@ class SQLiteCoreTests(unittest.TestCase):
         self.assertEqual([row["source_id"] for row in origins], ["second-feed", "synthetic-feed"])
         self.assertEqual(origins[0]["original_url"], "https://other.example.test/story/9")
 
+    def test_repeat_imports_keep_collection_bounds_and_latest_metadata(self):
+        event_id, inserted = self.add(
+            collected_at="2026-02-02T10:00:00Z",
+            original_url="https://example.test/story/old",
+            language="en",
+            country="GB",
+        )
+        self.assertTrue(inserted)
+        self.add(
+            collected_at="2026-02-04T10:00:00Z",
+            original_url="https://example.test/story/current",
+            language="pl",
+            country="PL",
+        )
+        # A late backfill has an earlier collection timestamp and stale metadata.
+        self.add(
+            collected_at="2026-02-01T10:00:00Z",
+            original_url="https://example.test/story/backfill",
+            language="de",
+            country="DE",
+        )
+        origin = self.connection.execute(
+            "SELECT * FROM event_sources WHERE event_id=? AND source_id='synthetic-feed'", (event_id,)
+        ).fetchone()
+        self.assertEqual(origin["first_seen_at"], "2026-02-01T10:00:00.000000Z")
+        self.assertEqual(origin["last_seen_at"], "2026-02-04T10:00:00.000000Z")
+        self.assertEqual(origin["original_url"], "https://example.test/story/current")
+        self.assertEqual(origin["language"], "pl")
+        self.assertEqual(origin["country"], "PL")
+
+    def test_each_source_keeps_independent_provenance_for_deduplicated_event(self):
+        event_id, _ = self.add(collected_at="2026-02-02T00:00:00Z", language="en", country="GB")
+        create_source(self.connection, "second-feed", "Second synthetic feed")
+        second_id, inserted = self.add(
+            source_id="second-feed",
+            original_url="https://other.example.test/item",
+            collected_at="2026-02-01T00:00:00Z",
+            language="pl",
+            country="PL",
+        )
+        self.assertFalse(inserted)
+        self.assertEqual(second_id, event_id)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM events").fetchone()[0], 1)
+        origins = self.connection.execute(
+            "SELECT source_id, first_seen_at, last_seen_at, original_url, language, country "
+            "FROM event_sources ORDER BY source_id"
+        ).fetchall()
+        self.assertEqual(len(origins), 2)
+        self.assertEqual(origins[0]["source_id"], "second-feed")
+        self.assertEqual(origins[0]["language"], "pl")
+        self.assertEqual(origins[1]["source_id"], "synthetic-feed")
+        self.assertEqual(origins[1]["language"], "en")
+
+    def test_invalid_provenance_rolls_back_new_event(self):
+        run_id = start_ingest_run(self.connection, "synthetic-feed", "2026-02-01T00:00:00Z")
+        create_source(self.connection, "other-feed", "Other synthetic feed")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.add(ingest_run_id=run_id, source_id="other-feed", dedup_key="rollback:event")
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM events WHERE dedup_key='rollback:event'").fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM event_sources WHERE source_id='other-feed'").fetchone()[0], 0
+        )
+
     def test_null_geolocation_is_valid(self):
         event_id, _ = self.add()
         event = self.connection.execute(
