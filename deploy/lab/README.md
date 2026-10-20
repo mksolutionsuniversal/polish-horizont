@@ -22,7 +22,7 @@ This displays only OS/Docker versions, architecture, available RAM/disk, checks 
 
 If port 15480 is in use, choose another unused unprivileged port locally, for example `HORIZONT_LAB_PORT=15481`, and rerun preflight. Every Compose operation is explicitly scoped with `-p horizont-lab` so a shell `COMPOSE_PROJECT_NAME` cannot point to another project, and `--env-file /dev/null` disables automatic repository `.env` overrides. The optional exported `HORIZONT_LAB_PORT` still works, but it must be used consistently for preflight, launch, and the browser address. Check the selected Docker context is a **local Unix socket** (preflight rejects remote contexts).
 
-Only host address **127.0.0.1** is published. This first preview has no persistent volumes, databases, secrets, external requests or authentication service.
+Only host address **127.0.0.1** is published. This first preview has no persistent volumes, databases, secrets, application-initiated external requests or authentication service. **Security tradeoff:** Docker Desktop needs the preview attached to a standard project-scoped bridge for host-port publishing. A standard bridge permits potential outbound network access; we therefore do **not** claim egress is blocked by this Compose file. The application currently serves only bundled synthetic files and has no fetcher. If future code starts making outbound requests, add an explicit egress policy before enabling it. Future SQLite/DB services belong to a separate `internal: true` network.
 
 ## 1. Manual first launch — only after preflight is satisfactory
 
@@ -36,7 +36,23 @@ Browse `http://127.0.0.1:15480/` on this machine. You should see the same PL/EN 
 
 If a different port was selected, prefix all relevant commands with the same `HORIZONT_LAB_PORT=...` environment value and open that local port instead.
 
-**Isolation:** Compose project is named `horizont-lab`; its network is private/internal; container root FS is read-only; nonroot UID 10001; drops Linux capabilities and blocks privilege elevation; RAM 128 MiB, CPU 0.5, process limit 64. No shared mounts or Docker socket. The preview web server listens on `0.0.0.0:8080` **inside the isolated container only**; macOS bind is localhost. `restart: no`, so it should not be restarted as a resident daemon by this Compose project after a stop. Docker Desktop's VM still has overhead: measure actual host usage.
+**Isolation:** Compose project is named `horizont-lab`; its bridge network is project-scoped, **not** Docker `internal` (to make macOS localhost port forwarding work). This allows potential egress, although the preview itself has no outbound application logic. Container root FS is read-only; nonroot UID 10001; drops Linux capabilities and blocks privilege elevation; RAM 128 MiB, CPU 0.5, process limit 64. No shared mounts or Docker socket. The preview web server listens on `0.0.0.0:8080` **inside the isolated container only**; macOS bind is localhost. `restart: no`, so it should not be restarted as a resident daemon by this Compose project after a stop. Docker Desktop's VM still has overhead: measure actual host usage.
+
+### Repairing an already-running LAB created with the earlier internal network
+
+The first Mid-2014 pilot produced `Health=healthy` and `HTTP 200` **inside** the container, but Docker Desktop showed only `8080/tcp` and returned `curl (7)` from the host. The original `internal: true` network intentionally had no external gateway and prevented the Desktop port forward. The updated project-scoped bridge corrects that, at the explicitly documented egress tradeoff above.
+
+**After pulling this reviewed fix and checking that this is still the correct local Docker Desktop context**, use a scoped stop/recreate. It touches only the `horizont-lab` preview service and its network. Do not rebuild or pull the already-installed image `horizont-preview:lab`:
+
+```sh
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml down
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml up -d --no-build --pull never preview
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml ps
+docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml port preview 8080
+curl -fsSI --max-time 5 http://127.0.0.1:15480/
+```
+
+Expected: `127.0.0.1:15480->8080/tcp` in the PORTS column, `healthy` after startup, and HTTP 200. If unsuccessful, do not change other containers, networks, firewall rules, credentials or Docker Desktop global settings; read scoped logs and inspect only HORIZONT. Before and after the recreation, separately check that Apple Bridge/SKS and other existing services continue working.
 
 ## 2. Acceptance and regression check
 

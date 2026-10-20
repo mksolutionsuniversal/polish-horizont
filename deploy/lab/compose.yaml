@@ -31,4 +31,9 @@ services:
 
 networks:
   preview_only:
-    internal: true
+    # Docker Desktop localhost publication requires a routable bridge.
+    # This network is project-scoped, but NOT egress-isolated. The preview
+    # contains only synthetic static files and has no credentials or volumes.
+    # Future database/backend services must use separate internal networks.
+    driver: bridge
+    internal: false

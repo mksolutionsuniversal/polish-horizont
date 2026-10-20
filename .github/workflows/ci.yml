@@ -29,3 +29,18 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Validate Docker LAB Compose syntax (no containers run)
         run: docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml config --quiet
+      - name: Smoke test actual Docker LAB localhost port (CI disposable host)
+        run: |
+          set -eu
+          trap 'docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml down' EXIT
+          docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml up -d --build preview
+          docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml port preview 8080 | grep -F '127.0.0.1:15480'
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --silent --show-error --fail --head --max-time 2 http://127.0.0.1:15480/ > /dev/null 2>&1; then
+              docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml ps
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml ps
+          exit 1
