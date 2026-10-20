@@ -64,7 +64,7 @@ def create_app(database: str | Path, token: str):
     The database is opened fresh with mode=ro/query_only on each request.
     This app is not a write gateway, feed downloader, or browser-side API.
     """
-    if not isinstance(token, str) or len(token) < 32 or len(token) > 1024:
+    if not isinstance(token, str) or not token.isascii() or len(token) < 32 or len(token) > 1024:
         raise ValueError("a private bearer token of at least 32 chars is required")
     if not isinstance(database, (str, Path)) or not str(database):
         raise ValueError("existing database path is required")
@@ -85,7 +85,7 @@ def create_app(database: str | Path, token: str):
         else:
             header = environ.get("HTTP_AUTHORIZATION", "")
             if (
-                not isinstance(header, str) or len(header) > MAX_AUTH_BYTES
+                not isinstance(header, str) or not header.isascii() or len(header) > MAX_AUTH_BYTES
                 or not header.startswith("Bearer ")
                 or not hmac.compare_digest(header[7:], token)
             ):
