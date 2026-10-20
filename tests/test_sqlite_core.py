@@ -7,9 +7,11 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from horizont.core import db as db_module  # noqa: E402
 from horizont.core import (  # noqa: E402
     SCHEMA_VERSION,
     add_event,
@@ -186,6 +188,34 @@ class MigrationTests(unittest.TestCase):
             self.assertIn("idx_events_occurred_at", after)
             self.assertEqual(
                 connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0], SCHEMA_VERSION
+            )
+        finally:
+            connection.close()
+
+    def test_failed_ddl_migration_rolls_back_and_can_retry(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            self.assertEqual(migrate(connection, target_version=1), 1)
+
+            def interrupted_migration(db):
+                db.execute("CREATE INDEX idx_synthetic_partial ON events(title)")
+                raise sqlite3.OperationalError("synthetic interrupted migration")
+
+            with patch.dict(db_module._MIGRATIONS, {2: interrupted_migration}):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "synthetic interrupted"):
+                    migrate(connection, target_version=2)
+
+            index = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_synthetic_partial'"
+            ).fetchone()
+            self.assertIsNone(index, "DDL must be rolled back after an interrupted migration")
+            self.assertEqual(
+                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0], 1
+            )
+            self.assertEqual(migrate(connection), SCHEMA_VERSION)
+            self.assertEqual(
+                connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0],
+                SCHEMA_VERSION,
             )
         finally:
             connection.close()
