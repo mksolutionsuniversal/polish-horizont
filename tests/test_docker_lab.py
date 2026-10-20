@@ -32,7 +32,8 @@ class DockerLabPackageTests(unittest.TestCase):
             "pids_limit: 64",
             "mem_limit: 128m",
             "cpus: 0.5",
-            "internal: true",
+            "driver: bridge",
+            "internal: false",
             "healthcheck:",
         ):
             self.assertIn(directive, self.compose)
@@ -42,6 +43,7 @@ class DockerLabPackageTests(unittest.TestCase):
         self.assertIn("docker context inspect", self.preflight)
         self.assertIn("-p horizont-lab", self.runbook)
         self.assertIn("--env-file /dev/null", self.runbook)
+        self.assertNotIn("internal: true", self.compose)
         self.assertNotIn("network_mode: host", self.compose)
         self.assertNotIn("docker.sock", self.compose)
         self.assertNotIn("volumes:", self.compose)
