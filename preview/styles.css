@@ -84,6 +84,9 @@ h2 { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 620; letter-spac
 .reset-button { height: 34px; padding: 0 10px; border: 1px solid #31424d; border-radius: 6px; background: transparent; color: #acbbc4; cursor: pointer; font-size: 10px; }
 .reset-button:hover { border-color: #678179; color: var(--accent); }
 .filter-hint { margin: 9px 2px 17px; color: #72838d; font-size: 9px; line-height: 1.5; }
+.filter-error { margin: 0 2px 14px; padding: 9px 11px; border: 1px solid rgba(255, 157, 155, .35); border-radius: 6px; background: rgba(154, 52, 54, .12); color: #ffb8b6; font-size: 11px; font-weight: 650; }
+.filter-error:empty { display: none; }
+.filter-field input[aria-invalid="true"] { border-color: var(--red); }
 .timeline { position: relative; display: grid; gap: 0; }
 .timeline::before { position: absolute; top: 12px; bottom: 14px; left: 5px; width: 1px; background: linear-gradient(var(--accent-deep), rgba(53, 92, 91, .08)); content: ""; }
 .event-card { position: relative; display: flex; gap: 16px; padding: 0 0 23px; }
