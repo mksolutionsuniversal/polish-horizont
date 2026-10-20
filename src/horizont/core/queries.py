@@ -114,23 +114,33 @@ def get_event_detail(connection: sqlite3.Connection, event_id: int) -> dict[str,
     """Return one event and its per-source provenance, or None when absent."""
     if type(event_id) is not int or event_id <= 0:
         raise ValueError("event_id must be a positive integer")
-    event = connection.execute(
-        """SELECT id, dedup_key, title, summary, occurred_at, published_at, collected_at,
-                  latitude, longitude, geo_precision, geo_confidence, validation_status
-           FROM events WHERE id = ?""",
-        (event_id,),
-    ).fetchone()
-    if event is None:
-        return None
-    sources = connection.execute(
-        """SELECT s.id AS source_id, s.name AS source_name,
-                  es.original_url, es.language, es.country,
-                  es.first_seen_at, es.last_seen_at, es.ingest_run_id
-           FROM event_sources es JOIN sources s ON s.id = es.source_id
-           WHERE es.event_id = ? ORDER BY s.id ASC""",
-        (event_id,),
-    ).fetchall()
-    return {"event": dict(event), "sources": [dict(row) for row in sources]}
+    # Both SELECTs must share a SQLite snapshot. In WAL mode a writer may
+    # otherwise commit between them and produce mismatched event/provenance.
+    # Do not take ownership of a transaction started by the caller.
+    owns_transaction = not connection.in_transaction
+    if owns_transaction:
+        connection.execute("BEGIN")
+    try:
+        event = connection.execute(
+            """SELECT id, dedup_key, title, summary, occurred_at, published_at, collected_at,
+                      latitude, longitude, geo_precision, geo_confidence, validation_status
+               FROM events WHERE id = ?""",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return None
+        sources = connection.execute(
+            """SELECT s.id AS source_id, s.name AS source_name,
+                      es.original_url, es.language, es.country,
+                      es.first_seen_at, es.last_seen_at, es.ingest_run_id
+               FROM event_sources es JOIN sources s ON s.id = es.source_id
+               WHERE es.event_id = ? ORDER BY s.id ASC""",
+            (event_id,),
+        ).fetchall()
+        return {"event": dict(event), "sources": [dict(row) for row in sources]}
+    finally:
+        if owns_transaction:
+            connection.rollback()  # End our read snapshot; never commit caller data.
 
 
 def list_source_statuses(connection: sqlite3.Connection) -> list[dict[str, object]]:
