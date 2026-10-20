@@ -192,6 +192,78 @@ class ReadonlyConnectionTests(unittest.TestCase):
                 open_readonly(missing)
             self.assertFalse(missing.exists())
 
+    def test_event_detail_uses_one_snapshot_while_writer_commits(self):
+        # Regression: two independent SELECT snapshots could combine an old
+        # event with provenance committed by a concurrent WAL writer.
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "snapshot.sqlite"
+            writer = sqlite3.connect(database)
+            writer.row_factory = sqlite3.Row
+            writer.execute("PRAGMA journal_mode = WAL")
+            writer.execute("PRAGMA foreign_keys = ON")
+            reader = None
+            try:
+                migrate(writer)
+                create_source(writer, "feed-a", "Synthetic Feed A")
+                event_id, _ = add_event(
+                    writer, source_id="feed-a",
+                    original_url="https://example.test/old",
+                    dedup_key="synthetic:snapshot",
+                    title="Snapshot fixture",
+                    collected_at="2026-05-01T00:00:00Z",
+                )
+                reader = open_readonly(database)
+                updated = []
+
+                def concurrent_writer(statement):
+                    if "FROM event_sources es JOIN sources s" in statement and not updated:
+                        writer.execute(
+                            "UPDATE event_sources SET original_url=? WHERE event_id=?",
+                            ("https://example.test/new", event_id),
+                        )
+                        writer.commit()
+                        updated.append(True)
+
+                reader.set_trace_callback(concurrent_writer)
+                detail = get_event_detail(reader, event_id)
+                reader.set_trace_callback(None)
+                self.assertEqual(updated, [True], "concurrent WAL commit must have occurred")
+                self.assertEqual(detail["sources"][0]["original_url"], "https://example.test/old")
+                self.assertEqual(
+                    writer.execute(
+                        "SELECT original_url FROM event_sources WHERE event_id=?", (event_id,)
+                    ).fetchone()[0],
+                    "https://example.test/new",
+                )
+                self.assertFalse(reader.in_transaction, "owned read transaction must be closed")
+            finally:
+                if reader is not None:
+                    reader.close()
+                writer.close()
+
+    def test_event_detail_does_not_end_caller_transaction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "caller.sqlite"
+            writer = sqlite3.connect(database)
+            writer.row_factory = sqlite3.Row
+            writer.execute("PRAGMA journal_mode=WAL")
+            migrate(writer)
+            create_source(writer, "feed-a", "Fixture")
+            event_id, _ = add_event(
+                writer, source_id="feed-a", original_url="https://example.test/a",
+                dedup_key="caller:transaction", title="Fixture",
+                collected_at="2026-05-01T00:00:00Z",
+            )
+            writer.close()
+            reader = open_readonly(database)
+            try:
+                reader.execute("BEGIN")
+                self.assertIsNotNone(get_event_detail(reader, event_id))
+                self.assertTrue(reader.in_transaction, "do not close a caller-owned transaction")
+                reader.rollback()
+            finally:
+                reader.close()
+
     def test_open_readonly_rejects_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "regular file"):
