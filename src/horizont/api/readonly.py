@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import sys
 import threading
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs
@@ -77,6 +78,14 @@ class BoundedThreadingWSGIServer(ThreadingMixIn, WSGIServer):
             super().process_request_thread(request, client_address)
         finally:
             self._connection_slots.release()
+
+    def handle_error(self, request, client_address):
+        # A client holding incomplete headers until the socket timeout is an
+        # expected disconnect; dumping a traceback on every such connection
+        # can otherwise fill logs. Preserve default visibility for other bugs.
+        if isinstance(sys.exc_info()[1], (TimeoutError, ConnectionError)):
+            return
+        super().handle_error(request, client_address)
 
 
 def _number(value: str | None, default: int, minimum: int, maximum: int) -> int:
