@@ -1,0 +1,21 @@
+# Allowlist synthetic demo only: no private data or Git history.
+**
+!src/
+!src/horizont/
+!src/horizont/__init__.py
+!src/horizont/api/
+!src/horizont/api/__init__.py
+!src/horizont/api/readonly.py
+!src/horizont/core/
+!src/horizont/core/__init__.py
+!src/horizont/core/db.py
+!src/horizont/core/queries.py
+!src/horizont/ui_demo/
+!src/horizont/ui_demo/__init__.py
+!src/horizont/ui_demo/server.py
+!tools/
+!tools/generate_api_demo.py
+!preview/
+!preview/index.html
+!preview/app.js
+!preview/styles.css
