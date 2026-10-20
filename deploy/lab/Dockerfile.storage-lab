@@ -1,0 +1,22 @@
+# Optional, synthetic-only persistent SQLite LAB. No application auto-start.
+FROM python:3.12-alpine
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/horizont/src
+
+RUN addgroup -S -g 10001 horizont && \
+    adduser -S -D -H -u 10001 -G horizont horizont
+
+WORKDIR /opt/horizont
+COPY src/horizont/ /opt/horizont/src/horizont/
+
+# Docker's initial named-volume population preserves ownership from these
+# empty image directories; only maintenance services can mount them RW.
+RUN mkdir -p /opt/horizont/state /opt/horizont/view /opt/horizont/backup \
+    /opt/horizont/recovered && \
+    chown -R 10001:10001 /opt/horizont
+
+USER 10001:10001
+EXPOSE 15481
+CMD ["python", "-m", "horizont.lab_storage.operations", "status"]
