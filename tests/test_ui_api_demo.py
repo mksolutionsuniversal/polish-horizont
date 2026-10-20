@@ -131,7 +131,9 @@ class SyntheticUiSqliteTests(unittest.TestCase):
         s, b, h = request(self.app, "/", method="HEAD")
         self.assertEqual(s, 200)
         self.assertEqual(b, b"")
-        self.assertGreater(int(h["Content-Length"]), 5000)  # dynamic SQL fixture is smaller than the static four-item fixture
+        actual = request(self.app, "/")[1]
+        self.assertEqual(int(h["Content-Length"]), len(actual))
+        self.assertGreater(len(actual), 1000)
         status, js, _ = request(self.app, "/app.js")
         self.assertEqual(status, 200)
         self.assertIn(b"SQLITE DEMO", js)
