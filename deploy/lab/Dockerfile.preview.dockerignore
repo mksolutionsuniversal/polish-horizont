@@ -1,0 +1,7 @@
+# Dockerfile-specific ignore rules: only public synthetic UI assets.
+# No repository source, credentials, Git history or private host files in build context.
+**
+!preview/
+!preview/index.html
+!preview/app.js
+!preview/styles.css

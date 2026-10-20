@@ -27,3 +27,5 @@ jobs:
         run: python3 tools/check_repo_hygiene.py
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
+      - name: Validate Docker LAB Compose syntax (no containers run)
+        run: docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml config --quiet
