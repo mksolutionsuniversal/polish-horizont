@@ -40,6 +40,15 @@ canonical URL, or response beyond the requested bound. A valid empty
 before writing through the existing SQLite core; valid empty and malformed
 responses are recorded as distinct `empty` and `failed` runs.
 
+After validation, all event/provenance inserts and successful run finalization
+share one explicit SQLite transaction. A failure during any insert rolls back
+**the whole batch**, then records a separate failed run with zero inserted
+items. `add_event` and `finish_ingest_run` respect an already-active caller
+transaction rather than committing it independently. `ingest_payload` requires
+no pre-existing transaction and rejects a caller-owned active transaction
+before any change. The synthetic tests inject a database failure during
+the second article and verify that no partial event survives.
+
 `possibly_truncated` is set when the response count reaches the requested
 limit. This is a conservative signal, not proof that additional matching
 articles exist.
