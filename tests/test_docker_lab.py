@@ -37,6 +37,11 @@ class DockerLabPackageTests(unittest.TestCase):
         ):
             self.assertIn(directive, self.compose)
         self.assertNotIn("privileged: true", self.compose)
+        self.assertIn("-p horizont-lab", self.preflight)
+        self.assertIn("--env-file /dev/null", self.preflight)
+        self.assertIn("docker context inspect", self.preflight)
+        self.assertIn("-p horizont-lab", self.runbook)
+        self.assertIn("--env-file /dev/null", self.runbook)
         self.assertNotIn("network_mode: host", self.compose)
         self.assertNotIn("docker.sock", self.compose)
         self.assertNotIn("volumes:", self.compose)
@@ -59,7 +64,7 @@ class DockerLabPackageTests(unittest.TestCase):
 
     def test_preflight_is_read_only_and_not_executing_containers(self):
         self.assertIn('if [ "$(uname -s)" != "Darwin" ]', self.preflight)
-        self.assertIn("docker compose -f deploy/lab/compose.yaml config --quiet", self.preflight)
+        self.assertIn("docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml config --quiet", self.preflight)
         self.assertIn("lsof -nP -iTCP:", self.preflight)
         for dangerous in (
             "docker system prune",
@@ -74,8 +79,8 @@ class DockerLabPackageTests(unittest.TestCase):
 
     def test_runbook_requires_preflight_and_has_scoped_rollback(self):
         self.assertIn("sh deploy/lab/preflight-macos.sh", self.runbook)
-        self.assertIn("docker compose -f deploy/lab/compose.yaml up -d --build preview", self.runbook)
-        self.assertIn("docker compose -f deploy/lab/compose.yaml down", self.runbook)
+        self.assertIn("docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml up -d --build preview", self.runbook)
+        self.assertIn("docker compose --env-file /dev/null -p horizont-lab -f deploy/lab/compose.yaml down", self.runbook)
         self.assertIn("synthetic", self.runbook)
         self.assertIn("No owner device", self.runbook)
 
