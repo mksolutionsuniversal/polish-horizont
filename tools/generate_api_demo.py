@@ -38,6 +38,11 @@ def main() -> None:
             published_at=None, occurred_at=None,
             summary="Synthetic only — not a real incident.",
         )
+        # This image is immutable at runtime, so checkpoint the synthetic WAL
+        # and switch its *demo-only* DB to rollback journaling before COPY.
+        # Real collector SQLite WAL strategy is unaffected by this fixture.
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("PRAGMA journal_mode=DELETE")
     finally:
         connection.close()
 
