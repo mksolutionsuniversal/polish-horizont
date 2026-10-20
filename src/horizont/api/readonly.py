@@ -6,6 +6,7 @@ The default listener is localhost only; HTTP is not an internet-facing API.
 
 from __future__ import annotations
 
+from contextlib import closing
 import hmac
 import json
 import os
@@ -104,11 +105,11 @@ def create_app(database: str | Path, token: str):
                             "limit": _number(p.get("limit"), 50, 1, 100),
                             "offset": _number(p.get("offset"), 0, 0, 100000),
                         }
-                        with open_readonly(database_path) as connection:
+                        with closing(open_readonly(database_path)) as connection:
                             payload = list_recent_events(connection, **args)
                     elif match := EVENT_PATH.fullmatch(path):
                         _params(raw, set())
-                        with open_readonly(database_path) as connection:
+                        with closing(open_readonly(database_path)) as connection:
                             data = get_event_detail(connection, int(match.group(1)))
                         if data is None:
                             status, payload = 404, {"error": "not_found"}
@@ -118,13 +119,13 @@ def create_app(database: str | Path, token: str):
                         p = _params(raw, SOURCE_PARAMS)
                         limit = _number(p.get("limit"), 50, 1, 100)
                         offset = _number(p.get("offset"), 0, 0, 100000)
-                        with open_readonly(database_path) as connection:
+                        with closing(open_readonly(database_path)) as connection:
                             records = list_source_statuses(connection)
                         payload = {"items": records[offset:offset + limit],
                                    "limit": limit, "offset": offset}
                     elif path == "/ready":
                         _params(raw, set())
-                        with open_readonly(database_path) as connection:
+                        with closing(open_readonly(database_path)) as connection:
                             connection.execute("SELECT id FROM sources LIMIT 1").fetchall()
                         payload = {"status": "ready"}
                     else:
