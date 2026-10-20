@@ -1,0 +1,14 @@
+# Deny all repo/host material except the Python library and synthetic builder.
+**
+!src/
+!src/horizont/
+!src/horizont/__init__.py
+!src/horizont/api/
+!src/horizont/api/__init__.py
+!src/horizont/api/readonly.py
+!src/horizont/core/
+!src/horizont/core/__init__.py
+!src/horizont/core/db.py
+!src/horizont/core/queries.py
+!tools/
+!tools/generate_api_demo.py
