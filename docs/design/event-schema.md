@@ -22,7 +22,7 @@ Foreign keys are enabled for connections created by `connect()`. Unique source I
 
 ## Indexes and migrations
 
-Migration 1 creates the source, run, event, provenance, and migration tables. Migration 2 adds indexes for event occurred/published/collected times, source recency, and per-source run history. `migrate(connection)` applies pending versions in order and is idempotent. The current schema version is exported as `SCHEMA_VERSION`.
+Migration 1 creates the source, run, event, provenance, and migration tables. Migration 2 adds indexes for event occurred/published/collected times, source recency, and per-source run history. `migrate(connection)` applies pending versions in order and is idempotent. Each migration explicitly begins an SQLite transaction **before** any DDL and commits the migration version in the same transaction; interrupted CREATE TABLE/INDEX statements roll back so a retry is possible. The connection must not have a pre-existing active transaction when pending migrations are applied. A synthetic interrupted-DDL regression test verifies rollback and retry. The current schema version is exported as `SCHEMA_VERSION`.
 
 `connect(path)` enables SQLite WAL mode and foreign keys for a local file database. WAL supports local concurrent readers alongside a writer, but does not turn this prototype into a network/shared database. SQLite may report `memory` journal mode for `:memory:` databases; tests use that or temporary files and no real data.
 
