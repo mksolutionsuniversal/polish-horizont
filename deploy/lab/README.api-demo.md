@@ -30,6 +30,18 @@ curl -fsS -H "Authorization: Bearer $HORIZONT_API_TOKEN" http://127.0.0.1:15481/
 
 The `curl` JSON response is fictional and suitable for the private terminal, but never submit future **real** API output into the public GitHub repo. Do not use this demo token for any production deployment. Close the terminal to discard the exported shell variable, or run `unset HORIZONT_API_TOKEN` when done; note that an already running demo container retains its copy until stopped.
 
+## Recovery after API stopped answering requests (Issue #32, 20 October 2026)
+
+On the first Mid-2014 run, the separate API returned /health 200, unauthorized events 401 and two authorized synthetic records, then became Docker `unhealthy` after several minutes. The Docker healthcheck exceeded its 3-second timeout 13 times, and a manual request from **inside** the container timed out; host curl gave 000. Restarting **only** `horizont-api-lab` brought back HTTP 200 and healthy, with no OOM signal. This does not conclusively establish root cause, but a client leaving incomplete HTTP headers on the original single-threaded WSGI server could monopolize the request loop.
+
+Patch #33 introduces bounded 8-connection threaded handling and a 5-second client socket timeout. Its isolated Linux CI opens an intentionally incomplete HTTP request while another client still gets /health 200, without changing the accepted frontend, port mapping, auth or DB. This remains a LAB-only server, **not** a production HTTP server.
+
+**Owner-side update only after PR merge and backup/health checks**: ensure local shell has a *demo-only* `HORIZONT_API_TOKEN` set (reuse the existing short-lived shell variable if available; otherwise generate a new random token). In local Terminal on Mid-2014, run `git pull --ff-only`, then
+`docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml up -d --build --force-recreate api`.
+The command rebuilds/recreates only the API demo and its *image*, never the static `horizont-lab` preview on 15480. A temporary API outage during recreation is expected. If regeneration creates a **new** demo token, old clients will rightly get 401 and must be updated locally.
+
+After startup, inspect only API `ps` status, /health HTTP 200 and unauthorized events HTTP 401. Do **not** declare the host incident closed based on the first 200: observe that Docker remains healthy for **at least 15 minutes**, beyond the previous 7-minute failure window, while keeping a browser tab at /health if appropriate; verify that Apple Bridge/SKS remain healthy under both Docker services. No live feed is running. A scoped rollback is `docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml down` (no -v/prune). For a code rollback revert only PR #33 in the repository; never modify other Docker stacks.
+
 ## Verification and status
 
 `GET /health` is public generic process liveness, not data freshness. `GET /ready` requires bearer and only tests the synthetic DB. Data endpoints require bearer and use only fixed, parameterized read-only SQLite queries; failed availability returns 503 rather than a false empty dataset. This is **not** a browser-facing authenticated session architecture. Do not embed bearer credentials in `preview/app.js` or expose this API through Cloudflare, Tunnels, MCP, Contabo or LAN. The current UI is still synthetic and unchanged.
