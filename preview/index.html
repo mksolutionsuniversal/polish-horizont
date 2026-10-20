@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>POLISH HORIZONT — podgląd syntetyczny</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <script id="fixture-data" type="application/json">
+  {
+    "synthetic": true,
+    "as_of": "2026-10-20T12:00:00Z",
+    "events": [
+      {
+        "id": "demo-001",
+        "title": {"pl": "Ćwiczenie: obserwacja infrastruktury w Polsce", "en": "Exercise: infrastructure observation in Poland"},
+        "summary": {"pl": "Syntetyczny wpis demonstracyjny. Nie opisuje prawdziwego zdarzenia.", "en": "Synthetic demonstration entry. It does not describe a real event."},
+        "occurred_at": "2026-10-20T09:15:00Z",
+        "published_at": "2026-10-20T09:32:00Z",
+        "collected_at": "2026-10-20T09:36:12Z",
+        "validation_status": "pending",
+        "geo_precision": "region",
+        "sources": [{"id": "demo-pl", "name": "Example PL Bulletin", "url": "https://example.test/pl/bulletin/001", "language": "pl", "country": "PL"}]
+      },
+      {
+        "id": "demo-002",
+        "title": {"pl": "Ćwiczenie: komunikat lokalny w Wielkiej Brytanii", "en": "Exercise: local notice in the United Kingdom"},
+        "summary": {"pl": "Przykład z fikcyjnego źródła testowego; kraj dotyczy obserwacji źródła.", "en": "Example from a fictional test source; the country describes source provenance."},
+        "occurred_at": "2026-10-19T18:00:00Z",
+        "published_at": "2026-10-19T18:20:00Z",
+        "collected_at": "2026-10-20T07:10:00Z",
+        "validation_status": "pending",
+        "geo_precision": "unknown",
+        "sources": [{"id": "demo-uk", "name": "Example UK Noticeboard", "url": "https://example.test/uk/notice/002", "language": "en", "country": "GB"}]
+      },
+      {
+        "id": "demo-003",
+        "title": {"pl": "Ćwiczenie bez potwierdzonych dat i geolokalizacji", "en": "Exercise with unknown dates and geolocation"},
+        "summary": {"pl": "Brak danych pozostaje jawnie nieznany — panel nie zgaduje wartości.", "en": "Missing data remains explicitly unknown; the panel does not guess values."},
+        "occurred_at": null,
+        "published_at": null,
+        "collected_at": "2026-10-20T06:45:00Z",
+        "validation_status": "pending",
+        "geo_precision": null,
+        "sources": [{"id": "demo-pl", "name": "Example PL Bulletin", "url": "https://example.test/pl/bulletin/003", "language": "pl", "country": "PL"}]
+      },
+      {
+        "id": "demo-004",
+        "title": {"pl": "Ćwiczenie: ten sam wpis z dwóch źródeł", "en": "Exercise: one item seen by two sources"},
+        "summary": {"pl": "Jeden wpis demonstracyjny zachowuje oba ślady pochodzenia.", "en": "One synthetic item retains both provenance records."},
+        "occurred_at": "2026-10-18T11:00:00Z",
+        "published_at": null,
+        "collected_at": "2026-10-20T05:20:00Z",
+        "validation_status": "pending",
+        "geo_precision": "country",
+        "sources": [
+          {"id": "demo-uk", "name": "Example UK Noticeboard", "url": "https://example.test/uk/notice/004", "language": "en", "country": "GB"},
+          {"id": "demo-pl", "name": "Example PL Bulletin", "url": "https://example.test/pl/bulletin/004", "language": "pl", "country": "PL"}
+        ]
+      }
+    ],
+    "sources": [
+      {"id": "demo-pl", "name": "Example PL Bulletin", "status": "ok", "detail": {"pl": "Ostatnia próbka syntetyczna dostępna.", "en": "Latest synthetic sample available."}},
+      {"id": "demo-empty", "name": "Example Empty Feed", "status": "empty", "detail": {"pl": "Ostatnie sprawdzenie zakończyło się poprawnie; brak wpisów.", "en": "Last check succeeded; no items were returned."}},
+      {"id": "demo-stale", "name": "Example Cached Feed", "status": "stale", "detail": {"pl": "Widoczna próbka jest oznaczona jako nieaktualna.", "en": "The visible sample is marked stale."}},
+      {"id": "demo-failed", "name": "Example Failed Feed", "status": "failed", "detail": {"pl": "Pobieranie nie powiodło się; liczba wydarzeń nie jest znana.", "en": "Fetch failed; the event count is unknown."}},
+      {"id": "demo-unavailable", "name": "Example Offline Feed", "status": "unavailable", "detail": {"pl": "Źródło jest niedostępne; nie oznacza to zera wydarzeń.", "en": "Source is unavailable; this does not mean zero events."}},
+      {"id": "demo-never", "name": "Example Unchecked Feed", "status": "never_run", "detail": {"pl": "Nie wykonano jeszcze żadnej próby.", "en": "No attempt has been made yet."}}
+    ]
+  }
+  </script>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="POLISH HORIZONT — początek">
+        <span class="brand-mark" aria-hidden="true">PH</span>
+        <span class="brand-copy"><strong>POLISH HORIZONT</strong><small>OPEN SOURCE INTELLIGENCE · PREVIEW</small></span>
+      </a>
+      <div class="top-actions">
+        <span class="preview-chip"><span class="pulse-dot"></span><span data-i18n="previewLabel">PODGLĄD · DANE SYNTETYCZNE</span></span>
+        <div class="language-switch" role="group" aria-label="Language / Język">
+          <button type="button" data-language="pl" aria-pressed="true">PL</button>
+          <button type="button" data-language="en" aria-pressed="false">EN</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span><span data-i18n="eyebrow">SYTUACYJNY OBRAZ · TRYB DEMO</span></p>
+          <h1 id="page-title" data-i18n="headline">Świat w kontekście.<br><em>Źródła na widoku.</em></h1>
+          <p class="hero-copy" data-i18n="heroCopy">Chronologia i kondycja źródeł, z wyraźnym rozdzieleniem faktów od brakujących danych.</p>
+        </div>
+        <div class="hero-meta">
+          <span class="meta-label" data-i18n="snapshotLabel">PRZYKŁADOWY ZRZUT</span>
+          <strong id="snapshot-time">—</strong>
+          <span class="meta-note" data-i18n="utcNote">Wszystkie czasy w UTC</span>
+        </div>
+      </section>
+
+      <section class="notice" aria-label="Preview scope">
+        <span class="notice-icon" aria-hidden="true">i</span>
+        <p data-i18n="notice">To statyczny podgląd z fikcyjnymi danymi. Nie łączy się z bazą SQLite, źródłami ani siecią. Kraje przy źródłach opisują pochodzenie, nie potwierdzoną lokalizację wydarzenia.</p>
+      </section>
+
+      <div class="dashboard-grid">
+        <section class="timeline-panel panel" aria-labelledby="timeline-title">
+          <div class="section-heading">
+            <div><p class="eyebrow small"><span class="eyebrow-line"></span><span data-i18n="feedEyebrow">MONITORING</span></p><h2 id="timeline-title" data-i18n="timelineTitle">Oś wydarzeń</h2></div>
+            <span class="count-pill" id="event-count">0</span>
+          </div>
+
+          <form class="filters" id="filters">
+            <label class="filter-field"><span data-i18n="timeField">Filtruj według czasu</span>
+              <select id="time-field" name="time-field">
+                <option value="occurred_at" data-i18n="occurred">Czas zdarzenia</option>
+                <option value="published_at" data-i18n="published">Czas publikacji</option>
+                <option value="collected_at" data-i18n="collected">Czas pobrania</option>
+              </select>
+            </label>
+            <label class="filter-field"><span data-i18n="fromUtc">Od (UTC, włącznie)</span><input id="filter-start" type="datetime-local" step="1"></label>
+            <label class="filter-field"><span data-i18n="beforeUtc">Przed (UTC, wyłącznie)</span><input id="filter-end" type="datetime-local" step="1"></label>
+            <button class="reset-button" id="reset-filters" type="reset" data-i18n="reset">Wyczyść</button>
+          </form>
+          <p class="filter-hint" data-i18n="rangeHint">Zakres [od, przed); wybrany czas pozostaje nieznany, jeśli źródło go nie podało.</p>
+          <p class="filter-error" id="filter-message" role="status" aria-live="polite"></p>
+
+          <div class="timeline" id="timeline" aria-live="polite"></div>
+          <div class="empty-state" id="empty-state" hidden>
+            <span class="empty-symbol" aria-hidden="true">⌕</span>
+            <strong data-i18n="emptyTitle">Brak wpisów w tym zakresie</strong>
+            <span data-i18n="emptyCopy">Zmień filtr czasu lub wyczyść zakres dat.</span>
+          </div>
+        </section>
+
+        <aside class="source-panel panel" aria-labelledby="sources-title">
+          <div class="section-heading">
+            <div><p class="eyebrow small"><span class="eyebrow-line"></span><span data-i18n="sourceEyebrow">TRANSPARENTNOŚĆ</span></p><h2 id="sources-title" data-i18n="sourcesTitle">Kondycja źródeł</h2></div>
+            <span class="source-count" id="source-count">—</span>
+          </div>
+          <p class="source-intro" data-i18n="sourceIntro">Stan ostatniej próby jest oddzielony od liczby wydarzeń.</p>
+          <div class="source-list" id="source-list"></div>
+          <div class="legend-box">
+            <span class="legend-icon" aria-hidden="true">◎</span>
+            <p data-i18n="countryLegend">Kraj przy źródle = kraj zaobserwowany w metadanych źródła. Nie potwierdza miejsca zdarzenia.</p>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="footer"><span>POLISH HORIZONT</span><span data-i18n="footer">PRYWATNOŚĆ PRZEDE WSZYSTKIM · PODGLĄD LOKALNY</span><span class="footer-version">MOCK 0.1</span></footer>
+  </div>
+</body>
+</html>
