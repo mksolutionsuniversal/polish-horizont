@@ -123,11 +123,11 @@
               </select>
             </label>
             <label class="filter-field"><span data-i18n="fromUtc">Od (UTC, włącznie)</span><input id="filter-start" type="datetime-local" step="1"></label>
-            <label class="filter-field"><span data-i18n="beforeUtc">Przed (UTC, bez końca)</span><input id="filter-end" type="datetime-local" step="1"></label>
+            <label class="filter-field"><span data-i18n="beforeUtc">Przed (UTC, wyłącznie)</span><input id="filter-end" type="datetime-local" step="1"></label>
             <button class="reset-button" id="reset-filters" type="reset" data-i18n="reset">Wyczyść</button>
           </form>
           <p class="filter-hint" data-i18n="rangeHint">Zakres [od, przed); wybrany czas pozostaje nieznany, jeśli źródło go nie podało.</p>
-          <p class="sr-only" id="filter-message" role="status" aria-live="polite"></p>
+          <p class="filter-error" id="filter-message" role="status" aria-live="polite"></p>
 
           <div class="timeline" id="timeline" aria-live="polite"></div>
           <div class="empty-state" id="empty-state" hidden>
