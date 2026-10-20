@@ -63,4 +63,18 @@ jobs:
           test "$status" = 401
           curl -fsS --max-time 5 -H "Authorization: Bearer $HORIZONT_API_TOKEN" http://127.0.0.1:15481/api/v1/events |
             python3 -c 'import json,sys; data=json.load(sys.stdin); assert len(data["items"]) == 2 and all(e["validation_status"] == "pending" for e in data["items"])'
+          # Regression: a client with incomplete HTTP headers must not freeze all requests.
+          python3 - <<'PY'
+          import socket
+          import time
+          import urllib.request
+          blocked = socket.create_connection(("127.0.0.1", 15481), timeout=2)
+          try:
+              blocked.sendall(b"GET /health HTTP/1.1\\r\\nHost: test\\r\\n")
+              time.sleep(0.3)
+              with urllib.request.urlopen("http://127.0.0.1:15481/health", timeout=2) as response:
+                  assert response.status == 200, response.status
+          finally:
+              blocked.close()
+          PY
           docker compose --env-file /dev/null -p horizont-api-lab -f deploy/lab/compose.api-demo.yaml ps
