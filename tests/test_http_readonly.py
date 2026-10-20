@@ -108,12 +108,12 @@ class ReadonlyHttpApiTests(unittest.TestCase):
         self.assertEqual(invoke(self.api, "/api/v1/events/1", query="extra=true")[0], 400)
 
     def test_sources_paginate_and_omit_raw_errors(self):
-        status, data, _ = invoke(self.api, "/api/v1/sources", query="offset=1&limit=1")
+        status, data, _ = invoke(self.api, "/api/v1/sources", query="offset=0&limit=1")
         self.assertEqual(status, 200)
         self.assertEqual(len(data["items"]), 1)
         self.assertEqual(data["items"][0]["source_status"], "failed")
         self.assertNotIn("sensitive upstream text", str(data))
-        self.assertEqual(data["offset"], 1)
+        self.assertEqual(data["offset"], 0)\n        second = invoke(self.api, "/api/v1/sources", query="offset=1&limit=1")[1]\n        self.assertEqual(second["items"][0]["source_id"], "synthetic-pl")
 
     def test_invalid_query_fields_duplicates_and_bounds_fail_closed(self):
         samples = (
