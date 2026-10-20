@@ -168,7 +168,14 @@ def restore_to_new(backup: str | Path, destination: str | Path) -> StorageResult
 def verify_existing(source: str | Path) -> StorageResult:
     """Read-only integrity/provenance verification, without migration or writes."""
     path = _existing_file(source)
+    # A hash of *only the main file* in WAL mode is NOT a complete
+    # database digest. Require a sealed, self-contained snapshot instead.
+    # For an active WAL DB use backup_live() to obtain such a snapshot.
+    if os.path.lexists(str(path) + "-wal") or os.path.lexists(str(path) + "-shm"):
+        raise ValueError("verify requires a self-contained backup; use backup_live for WAL")
     with closing(open_readonly(path)) as reader:
+        if reader.execute("PRAGMA journal_mode").fetchone()[0].lower() != "delete":
+            raise ValueError("verify requires a self-contained DELETE-journal snapshot")
         _verify(reader)
     digest = hashlib.sha256()
     with path.open("rb") as reader:
