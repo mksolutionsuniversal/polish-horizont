@@ -178,11 +178,11 @@ class GDELTRawZipTests(unittest.TestCase):
             parse_zip_rows(symlink, entry)
 
     def test_path_replacement_does_not_change_verified_zip_contents(self):
-        original_entry = self.make_zip(rows=b"original\\trow\\n")
+        original_entry = self.make_zip(rows=b"original\trow\n")
         alternate = Path(self.tmp.name) / "replacement.zip"
         with ZipFile(alternate, "w", compression=ZIP_DEFLATED) as z:
             z.writestr(
-                original_entry.url.rsplit("/", 1)[-1][:-4], b"tampered\\trow\\n"
+                original_entry.url.rsplit("/", 1)[-1][:-4], b"tampered\trow\n"
             )
         true_zip = ZipFile
 
