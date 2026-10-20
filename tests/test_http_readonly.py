@@ -87,6 +87,12 @@ class ReadonlyHttpApiTests(unittest.TestCase):
                     self.assertEqual(payload["error"], "unauthorized")
         with self.assertRaises(ValueError):
             create_app(self.db, "short")
+        with self.assertRaises(ValueError):
+            create_app(self.db, "Ą" * 32)
+        # Malformed Unicode-bearing credentials must be 401, never WSGI 500.
+        status, payload, _ = invoke(self.api, path="/api/v1/events", token="Ą" * 32)
+        self.assertEqual(status, 401)
+        self.assertEqual(payload["error"], "unauthorized")
 
     def test_events_paginate_and_do_not_invent_unknown_dates(self):
         status, payload, headers = invoke(self.api, "/api/v1/events", query="country=PL&limit=1&time_field=occurred_at")
