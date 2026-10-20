@@ -113,7 +113,9 @@ class ReadonlyHttpApiTests(unittest.TestCase):
         self.assertEqual(len(data["items"]), 1)
         self.assertEqual(data["items"][0]["source_status"], "failed")
         self.assertNotIn("sensitive upstream text", str(data))
-        self.assertEqual(data["offset"], 0)\n        second = invoke(self.api, "/api/v1/sources", query="offset=1&limit=1")[1]\n        self.assertEqual(second["items"][0]["source_id"], "synthetic-pl")
+        self.assertEqual(data["offset"], 0)
+        second = invoke(self.api, "/api/v1/sources", query="offset=1&limit=1")[1]
+        self.assertEqual(second["items"][0]["source_id"], "synthetic-pl")
 
     def test_invalid_query_fields_duplicates_and_bounds_fail_closed(self):
         samples = (
