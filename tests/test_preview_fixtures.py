@@ -3,6 +3,8 @@
 from datetime import datetime
 from html.parser import HTMLParser
 import json
+import shutil
+import subprocess
 from pathlib import Path
 import unittest
 from urllib.parse import urlsplit
@@ -87,6 +89,21 @@ class PreviewFixtureTests(unittest.TestCase):
             for source in event["sources"]:
                 self.assertEqual(urlsplit(source["url"]).hostname, "example.test")
                 self.assertIn(source["country"], {"PL", "GB"})
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js not installed in this environment")
+    def test_preview_javascript_executes_with_bilingual_and_filter_smoke(self):
+        script = Path(__file__).with_name("test_preview_runtime.cjs")
+        result = subprocess.run(
+            ["node", "--check", str(PREVIEW / "app.js")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = subprocess.run(
+            ["node", str(script)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Preview JS smoke PASS", result.stdout)
 
     def test_preview_uses_only_local_assets_and_no_network_api(self):
         self.assertIn('href="styles.css"', self.html)
