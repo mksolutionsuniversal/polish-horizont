@@ -218,6 +218,8 @@ def ingest_payload(
 ) -> IngestResult:
     """Record a supplied payload using the existing SQLite core; performs no fetch."""
     collection_time = normalize_utc(collected_at, required=True)
+    if connection.in_transaction:
+        raise GDELTDocError("ingest_payload requires no caller-owned active transaction")
     if connection.execute("SELECT 1 FROM sources WHERE id=?", (SOURCE_ID,)).fetchone() is None:
         create_source(connection, SOURCE_ID, SOURCE_NAME, GDELT_PROJECT_URL)
     run_id = start_ingest_run(connection, SOURCE_ID, collection_time)
@@ -235,36 +237,44 @@ def ingest_payload(
 
     inserted = 0
     try:
-        for article in batch.articles:
-            _, was_inserted = add_event(
+        # Legacy sqlite3's nested `with connection` helpers commit a caller's
+        # transaction unless they explicitly respect an active transaction.
+        # add_event() and finish_ingest_run() now do so, allowing this BEGIN
+        # to cover every event and the successful run finalization.
+        with connection:
+            connection.execute("BEGIN")
+            for article in batch.articles:
+                _, was_inserted = add_event(
+                    connection,
+                    source_id=SOURCE_ID,
+                    ingest_run_id=run_id,
+                    original_url=article.original_url,
+                    dedup_key=article.dedup_key,
+                    title=article.title,
+                    occurred_at=None,
+                    published_at=None,
+                    collected_at=collection_time,
+                    language=article.language,
+                    country=None,
+                    latitude=None,
+                    longitude=None,
+                    geo_precision="unknown",
+                    geo_confidence=None,
+                    validation_status="pending",
+                )
+                inserted += int(was_inserted)
+            status = "empty" if not batch.articles else "ok"
+            finish_ingest_run(
                 connection,
-                source_id=SOURCE_ID,
-                ingest_run_id=run_id,
-                original_url=article.original_url,
-                dedup_key=article.dedup_key,
-                title=article.title,
-                occurred_at=None,
-                published_at=None,
-                collected_at=collection_time,
-                language=article.language,
-                country=None,
-                latitude=None,
-                longitude=None,
-                geo_precision="unknown",
-                geo_confidence=None,
-                validation_status="pending",
+                run_id,
+                status,
+                finished_at=collection_time,
+                items_seen=len(batch.articles),
+                items_inserted=inserted,
             )
-            inserted += int(was_inserted)
-        status = "empty" if not batch.articles else "ok"
-        finish_ingest_run(
-            connection,
-            run_id,
-            status,
-            finished_at=collection_time,
-            items_seen=len(batch.articles),
-            items_inserted=inserted,
-        )
     except (sqlite3.Error, TypeError, ValueError) as exc:
+        # The context above rolled back *all* event and provenance writes.
+        # Mark only the previously committed run record as failed.
         finish_ingest_run(
             connection,
             run_id,
