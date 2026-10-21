@@ -2,9 +2,22 @@
 
 **Public code · Private data** — independent, privately operated, bilingual (PL/EN) OSINT research platform. This repository contains only source code, tests and non-sensitive configuration examples.
 
-## Status
+## Status (21 October 2026)
 
-Early planning and CI bootstrap. No HORIZONT application has been deployed. No production host, database, feed credentials, Apple Bridge/SKS or cloud infrastructure is connected to this repo.
+**Non-production, synthetic LAB prototype — not a live OSINT service.**
+
+The source repository now includes a tested SQLite event/provenance core, offline research adapters, a bilingual PL/EN dashboard mock, and four separate **opt-in** Docker LAB examples:
+
+- Static dashboard preview with fictional records.
+- Read-only, bearer-protected API serving an isolated synthetic SQLite database.
+- Same-origin dashboard rendering records from its own synthetic SQLite snapshot.
+- Persistent SQLite WAL writer, sealed read-only snapshot API, and distinct Docker volumes for backup and restore exercises.
+
+The opt-in LAB examples were run and tested on a local development machine; their operation is **not** evidence of production readiness. The latest persistence exercise and outstanding host checks are tracked in [Issue #39](https://github.com/mksolutionsuniversal/polish-horizont/issues/39). No live news feeds, scheduled collectors, trusted incident map, production MCP, or remote production deployment have been enabled. Synthetic events must never be presented as current real-world incidents.
+
+Named Docker volumes used for LAB exercises are not, by themselves, an independent encrypted off-host backup. Before using real data, the project still needs fresh coexistence checks, sleep/wake and VM restart tests, and separately verified encrypted recovery.
+
+The project is **private and non-commercial in purpose**; public code hosting by the repository account does not make it a commercial product. Private operator data, credentials and operational configuration stay outside GitHub.
 
 ## Planned modules
 
