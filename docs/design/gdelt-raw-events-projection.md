@@ -48,8 +48,12 @@ into HORIZONT's ISO-like event field. A complete in-range action coordinate
 pair is represented only as an unvalidated `GeographyCandidate` with pending
 status; it is not emitted as a validated map point. Missing or partial pairs
 produce no candidate. Invalid type/range and structurally contradictory
-coordinate-only rows are rejected. The projection does not reconcile names,
-country codes, actor affiliations, or geocoding results.
+coordinate-only rows are rejected. `ActionGeo_Type=0` with every remaining
+action geography field empty is treated as unlocated; type zero paired with
+any name, country, ADM1/ADM2 code, coordinate, or feature ID is rejected as
+contradictory. ADM1/ADM2 are included in that consistency check and are
+retained as raw candidate attributes for types 1–5. The projection does not
+reconcile names, country codes, actor affiliations, or geocoding results.
 
 ## SQLite boundary and follow-up proposal
 

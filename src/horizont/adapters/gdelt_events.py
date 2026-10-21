@@ -55,6 +55,8 @@ class GeographyCandidate:
     match_type: int
     fullname: str | None
     fips_country_code: str | None
+    adm1_code: str | None
+    adm2_code: str | None
     latitude: float
     longitude: float
     feature_id: str | None
@@ -115,14 +117,22 @@ def _number(value: str, field: str) -> float:
 
 
 def _action_geography(row: dict[str, str]) -> GeographyCandidate | None:
-    fields = ("ActionGeo_Type", "ActionGeo_FullName", "ActionGeo_CountryCode",
-              "ActionGeo_Lat", "ActionGeo_Long", "ActionGeo_FeatureID")
+    fields = (
+        "ActionGeo_Type", "ActionGeo_FullName", "ActionGeo_CountryCode",
+        "ActionGeo_ADM1Code", "ActionGeo_ADM2Code", "ActionGeo_Lat",
+        "ActionGeo_Long", "ActionGeo_FeatureID",
+    )
     values = [row[name].strip() for name in fields]
-    match_type, fullname, country, lat, lon, feature_id = values
+    match_type, fullname, country, adm1, adm2, lat, lon, feature_id = values
+    location_values = (fullname, country, adm1, adm2, lat, lon, feature_id)
     if not any(values):
         return None
     if not match_type:
         raise GDELTEventError("action geography has values without ActionGeo_Type")
+    if match_type == "0":
+        if any(location_values):
+            raise GDELTEventError("ActionGeo_Type 0 contradicts populated action geography")
+        return None
     if not re.fullmatch(r"[1-5]", match_type):
         raise GDELTEventError("ActionGeo_Type is outside the codebook vocabulary")
     if not lat or not lon:
@@ -133,7 +143,7 @@ def _action_geography(row: dict[str, str]) -> GeographyCandidate | None:
     if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
         raise GDELTEventError("action geography coordinates are out of range")
     return GeographyCandidate(
-        int(match_type), fullname or None, country or None,
+        int(match_type), fullname or None, country or None, adm1 or None, adm2 or None,
         latitude, longitude, feature_id or None,
     )
 

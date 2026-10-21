@@ -83,16 +83,23 @@ class GDELTEventProjectionTests(unittest.TestCase):
     def test_missing_and_ambiguous_geography_are_not_filled(self):
         no_geo = project_tsv_row(synthetic_row(), collected_at="2026-10-20T13:00:00Z")
         self.assertIsNone(no_geo.action_geography)
+        zero_geo = project_tsv_row(
+            synthetic_row(ActionGeo_Type="0"), collected_at="2026-10-20T13:00:00Z"
+        )
+        self.assertIsNone(zero_geo.action_geography)
         candidate = project_tsv_row(
             synthetic_row(
                 ActionGeo_Type="4", ActionGeo_FullName="Synthetic City, ZZ",
                 ActionGeo_CountryCode="ZZ", ActionGeo_Lat="10.5", ActionGeo_Long="20.25",
+                ActionGeo_ADM1Code="ZZ-AA", ActionGeo_ADM2Code="ZZ-001",
                 ActionGeo_FeatureID="synthetic-feature",
             ),
             collected_at="2026-10-20T13:00:00Z",
         ).action_geography
         self.assertIsNotNone(candidate)
         self.assertEqual(candidate.fips_country_code, "ZZ")  # not ISO country mapping
+        self.assertEqual(candidate.adm1_code, "ZZ-AA")
+        self.assertEqual(candidate.adm2_code, "ZZ-001")
         self.assertEqual(candidate.validation_status, "pending")
         # Names and FIPS codes can conflict; retain them only as raw pending
         # candidate attributes and do not infer or persist an event country.
@@ -130,6 +137,9 @@ class GDELTEventProjectionTests(unittest.TestCase):
     def test_geography_out_of_range_or_contradictory_is_rejected(self):
         for overrides in (
             {"ActionGeo_Lat": "1", "ActionGeo_Long": "2"},
+            {"ActionGeo_Type": "0", "ActionGeo_Lat": "1", "ActionGeo_Long": "2"},
+            {"ActionGeo_Type": "0", "ActionGeo_ADM1Code": "ZZ-AA"},
+            {"ActionGeo_Type": "0", "ActionGeo_ADM2Code": "ZZ-001"},
             {"ActionGeo_Type": "4", "ActionGeo_Lat": "91", "ActionGeo_Long": "2"},
             {"ActionGeo_Type": "4", "ActionGeo_Lat": "1", "ActionGeo_Long": "181"},
             {"ActionGeo_Type": "0", "ActionGeo_Lat": "1", "ActionGeo_Long": "2"},
@@ -142,6 +152,18 @@ class GDELTEventProjectionTests(unittest.TestCase):
             collected_at="2026-10-20T13:00:00Z",
         )
         self.assertIsNone(item.action_geography)
+
+    def test_middle_type_zero_row_does_not_abort_three_row_batch(self):
+        events = project_tsv_rows(
+            [
+                synthetic_row(GLOBALEVENTID="9900000001"),
+                synthetic_row(GLOBALEVENTID="9900000002", ActionGeo_Type="0"),
+                synthetic_row(GLOBALEVENTID="9900000003"),
+            ],
+            collected_at="2026-10-20T13:00:00Z",
+        )
+        self.assertEqual([event.gdelt_event_id for event in events], [9900000001, 9900000002, 9900000003])
+        self.assertIsNone(events[1].action_geography)
 
     def test_batch_rejects_duplicate_gdelt_ids_atomically(self):
         first = synthetic_row()
