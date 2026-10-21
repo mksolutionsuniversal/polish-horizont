@@ -47,6 +47,12 @@ publication or unknown excludes its old lineage from the active incident view
 without deleting that history. A valid incident cannot be silently
 reclassified.
 
+Revoking the final active positive review also moves a valid claim to
+`review_required` atomically with the revocation audit. New positive reviews
+for the current graph can then appear in the active evidence view, but do not
+change that status; a fresh, explicit owner validation is required to return it
+to `valid`.
+
 `legacy_v2_status` is an immutable fixture-only value. Effective synthetic v3
 status always starts `pending` and changes only through an explicit audited
 decision. This does not modify the production v2 schema or implement a

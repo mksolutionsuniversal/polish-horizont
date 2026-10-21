@@ -253,6 +253,12 @@ class OperatorLineageContract:
             raise ContractError("self edges are not valid lineage facts")
         with self._transaction():
             claim = self._claim(claim_id)
+            membership = self._db.execute(
+                "SELECT COUNT(*) FROM claim_records WHERE claim_id=? AND record_id IN (?,?)",
+                (claim_id, parent_record_id, child_record_id),
+            ).fetchone()[0]
+            if membership != 2:
+                raise ContractError("lineage edge endpoints must belong to the named claim")
             version = claim["graph_version"] + 1
             self._db.execute(
                 "INSERT INTO lineage_edges(claim_id,parent_record_id,child_record_id,relation,basis,graph_version,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -334,6 +340,8 @@ class OperatorLineageContract:
         directed: dict[str, set[str]] = {node: set() for node in nodes}
         for edge in edges:
             parent, child = edge
+            if parent not in graph or child not in graph:
+                return "unknown"
             graph[parent].add(child)
             graph[child].add(parent)
             directed[parent].add(child)
@@ -510,6 +518,12 @@ class OperatorLineageContract:
                     "INSERT INTO lineage_reviews(decision_id,claim_id,record_a,record_b,outcome,graph_version) VALUES(?,?,?,?,?,?)",
                     (decision_id, claim_id, pair[0], pair[1], outcome, current_graph),
                 )
+                if outcome == "revoked" and claim["effective_status"] == "valid":
+                    if not self.active_lineage(claim_id):
+                        self._db.execute(
+                            "UPDATE claims SET effective_status='review_required' WHERE claim_id=?",
+                            (claim_id,),
+                        )
             return decision_id
 
     def _consume_step_up(
@@ -574,9 +588,6 @@ class OperatorLineageContract:
         details = {"target_session_id": target_session_id}
         with self._transaction():
             actor = self._session(context, owner=True)
-            target = self._db.execute("SELECT * FROM sessions WHERE session_id=?", (target_session_id,)).fetchone()
-            if target is None or target["version"] != expected_version:
-                raise ContractConflict("target session is missing or changed")
             payload = {"actor": actor["actor_ref"], "action": "revoke", "claim": resource,
                        "outcome": "revoked", "prior_version": expected_version,
                        "policy": actor["policy_version"], "details": details,
@@ -587,6 +598,9 @@ class OperatorLineageContract:
                 if existing["actor_ref"] == actor["actor_ref"] and existing["request_digest"] == digest:
                     return int(existing["id"])
                 raise ContractDenied("idempotency key replay mismatch")
+            target = self._db.execute("SELECT * FROM sessions WHERE session_id=?", (target_session_id,)).fetchone()
+            if target is None or target["version"] != expected_version:
+                raise ContractConflict("target session is missing or changed")
             self._consume_step_up(session=actor, challenge_id=step_up_id, action="revoke",
                                   claim_id=resource, outcome="revoked", expected_version=expected_version,
                                   graph_version=0, details=details)
@@ -621,8 +635,8 @@ class OperatorLineageContract:
         status = "review_required" if claim["effective_status"] == "valid" and latest else claim["effective_status"]
         if status == "review_required":
             self._db.execute("UPDATE claims SET effective_status=? WHERE claim_id=?", (status, claim_id))
+        version = int(claim["version"])
         for review in latest:
-            prior = self._db.execute("SELECT * FROM decision_history WHERE id=?", (review["decision_id"],)).fetchone()
             system_key = f"lineage-change:{claim_id}:{new_graph}:{review['record_a']}:{review['record_b']}"
             detail = {"reason": reason, "previous_outcome": "independent", "new_outcome": "unknown"}
             cur = self._db.execute(
@@ -630,11 +644,15 @@ class OperatorLineageContract:
                    outcome,prior_version,resulting_version,graph_version,policy_version,rationale,details,created_at,supersedes_id)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (system_key,self._digest(detail),"synthetic-lineage-monitor","system","lineage_invalidated",
-                 claim_id,"unknown",claim["version"],claim["version"]+1,new_graph,self.POLICY_VERSION,
+                 claim_id,"unknown",version,version+1,new_graph,self.POLICY_VERSION,
                  reason,json.dumps(detail,sort_keys=True),self.clock.now(),review["decision_id"]),
             )
             decision_id = int(cur.lastrowid)
-            self._db.execute("UPDATE claims SET version=version+1,current_decision_id=? WHERE claim_id=?", (decision_id,claim_id))
+            version += 1
+            self._db.execute(
+                "UPDATE claims SET version=?,current_decision_id=? WHERE claim_id=?",
+                (version,decision_id,claim_id),
+            )
             self._db.execute(
                 "INSERT INTO lineage_reviews(decision_id,claim_id,record_a,record_b,outcome,graph_version) VALUES(?,?,?,?,'unknown',?)",
                 (decision_id,claim_id,review["record_a"],review["record_b"],new_graph),
@@ -642,7 +660,7 @@ class OperatorLineageContract:
 
     def active_lineage(self, claim_id: str) -> list[dict[str, Any]]:
         claim = self._claim(claim_id)
-        if claim["semantic_kind"] != "incident_hypothesis" or claim["effective_status"] == "review_required":
+        if claim["semantic_kind"] != "incident_hypothesis":
             return []
         latest = self._db.execute(
             """SELECT lr.* FROM lineage_reviews lr WHERE lr.claim_id=?

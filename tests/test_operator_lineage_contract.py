@@ -5,10 +5,12 @@ from __future__ import annotations
 from queue import Queue
 import threading
 import unittest
+from unittest.mock import patch
 
 from experiments.operator_lineage_contract.contract import (
     ContractConflict,
     ContractDenied,
+    ContractError,
     FakeClock,
     OperatorLineageContract,
 )
@@ -140,6 +142,20 @@ class OperatorLineageContractTests(unittest.TestCase):
         self.contract.revoke_session(second_owner, target_session_id=self.owner.session_id,
                                      step_up_id=revoke_challenge, expected_version=target_version,
                                      idempotency_key="revoke-owner-A", rationale="synthetic credential revocation")
+        prior_count = self.contract.decision_count()
+        repeated = self.contract.revoke_session(
+            second_owner, target_session_id=self.owner.session_id,
+            step_up_id=revoke_challenge, expected_version=target_version,
+            idempotency_key="revoke-owner-A", rationale="synthetic credential revocation",
+        )
+        self.assertEqual(repeated, self.contract.audit_history()[-1]["id"])
+        self.assertEqual(self.contract.decision_count(), prior_count)
+        with self.assertRaises(ContractDenied):
+            self.contract.revoke_session(
+                second_owner, target_session_id=self.owner.session_id,
+                step_up_id=revoke_challenge, expected_version=target_version,
+                idempotency_key="revoke-owner-A", rationale="changed replay payload",
+            )
         with self.assertRaises(ContractDenied):
             self.decision(step_up_id=challenge)
         self.assertEqual(self.contract.claim_state("claim-1")["version"], 0)
@@ -339,6 +355,171 @@ class OperatorLineageContractTests(unittest.TestCase):
         self.assertTrue(any(row["action"] == "validate_incident" and row["outcome"] == "valid" for row in history))
         invalidation = next(row for row in history if row["action"] == "lineage_invalidated")
         self.assertEqual(invalidation["supersedes_id"], accepted_id)
+
+    def test_revoking_last_positive_confirmation_requires_review_atomically(self):
+        a, b = self.add_pair(prefix="revoke-lineage")
+        self.positive_review(a, b, key="revoke-lineage-positive")
+        state = self.contract.claim_state("claim-1")
+        validation = self.contract.issue_step_up(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"],
+        )
+        self.contract.decide(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"], step_up_id=validation,
+            idempotency_key="revoke-lineage-valid", rationale="synthetic owner validation",
+        )
+        state = self.contract.claim_state("claim-1")
+        details = self.contract.independence_details("claim-1", a, b)
+        challenge = self.contract.issue_step_up(
+            self.owner, action="accept_independence", claim_id="claim-1", outcome="revoked",
+            expected_version=state["version"], details=details,
+        )
+        before_history = self.contract.decision_count()
+        self.contract.review_independence(
+            self.owner, claim_id="claim-1", record_a=a, record_b=b, outcome="revoked",
+            expected_version=state["version"], step_up_id=challenge,
+            idempotency_key="revoke-last-confirmation", rationale="synthetic owner revocation",
+        )
+        self.assertEqual(self.contract.claim_state("claim-1")["effective_status"], "review_required")
+        self.assertEqual(self.contract.active_lineage("claim-1"), [])
+        self.assertEqual(self.contract.decision_count(), before_history + 1)
+        self.assertEqual(self.contract.audit_history(claim_id="claim-1")[-1]["outcome"], "revoked")
+
+    def test_fresh_current_graph_evidence_allows_explicit_revalidation_only(self):
+        a, b = self.add_pair(prefix="revalidate-old")
+        correction = "revalidate-correction"
+        self.contract.add_synthetic_record(
+            claim_id="claim-1", record_id=correction, source_record_id="sr-revalidate-correction",
+            observation_id="obs-revalidate-correction", canonical_url="https://example.test/revalidate/correction",
+            record_kind="correction",
+        )
+        self.positive_review(a, b, key="revalidate-old-positive")
+        state = self.contract.claim_state("claim-1")
+        challenge = self.contract.issue_step_up(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"],
+        )
+        self.contract.decide(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"], step_up_id=challenge,
+            idempotency_key="revalidate-initial", rationale="synthetic owner validation",
+        )
+        self.contract.add_lineage_edge(
+            claim_id="claim-1", parent_record_id=correction, child_record_id=a,
+            relation="retracts", basis="synthetic correction invalidates earlier basis",
+        )
+        self.assertEqual(self.contract.claim_state("claim-1")["effective_status"], "review_required")
+        self.assertEqual(self.contract.active_lineage("claim-1"), [])
+
+        fresh_a, fresh_b = self.add_pair(prefix="revalidate-fresh")
+        self.positive_review(fresh_a, fresh_b, key="revalidate-fresh-positive")
+        self.assertEqual(self.contract.claim_state("claim-1")["effective_status"], "review_required")
+        self.assertEqual(len(self.contract.active_lineage("claim-1")), 1)
+        state = self.contract.claim_state("claim-1")
+        challenge = self.contract.issue_step_up(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"], graph_version=state["graph_version"],
+        )
+        self.contract.decide(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"], graph_version=state["graph_version"],
+            step_up_id=challenge, idempotency_key="revalidate-explicit-owner",
+            rationale="explicit review of fresh current-graph evidence",
+        )
+        self.assertEqual(self.contract.claim_state("claim-1")["effective_status"], "valid")
+
+    def test_multiple_lineage_invalidations_have_sequential_audit_versions(self):
+        first = self.add_pair(prefix="sequential-audit-a")
+        second = self.add_pair(prefix="sequential-audit-b")
+        correction = "sequential-audit-correction"
+        self.contract.add_synthetic_record(
+            claim_id="claim-1", record_id=correction, source_record_id="sr-sequential-correction",
+            observation_id="obs-sequential-correction", canonical_url="https://example.test/sequential/correction",
+            record_kind="correction",
+        )
+        self.positive_review(*first, key="sequential-positive-a")
+        self.positive_review(*second, key="sequential-positive-b")
+        state = self.contract.claim_state("claim-1")
+        challenge = self.contract.issue_step_up(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"],
+        )
+        self.contract.decide(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"], step_up_id=challenge,
+            idempotency_key="sequential-valid", rationale="synthetic owner validation",
+        )
+        prior_version = self.contract.claim_state("claim-1")["version"]
+        self.contract.add_lineage_edge(
+            claim_id="claim-1", parent_record_id=correction, child_record_id=first[0],
+            relation="retracts", basis="synthetic correction invalidates both reviewed graph decisions",
+        )
+        invalidations = [row for row in self.contract.audit_history(claim_id="claim-1")
+                         if row["action"] == "lineage_invalidated"]
+        self.assertEqual(len(invalidations), 2)
+        self.assertEqual([row["prior_version"] for row in invalidations], [prior_version, prior_version + 1])
+        self.assertEqual([row["resulting_version"] for row in invalidations], [prior_version + 1, prior_version + 2])
+
+    def test_graph_invalidation_and_projection_rollback_as_one_transaction(self):
+        a, b = self.add_pair(prefix="atomic-invalidation")
+        correction = "atomic-invalidation-correction"
+        self.contract.add_synthetic_record(
+            claim_id="claim-1", record_id=correction, source_record_id="sr-atomic-correction",
+            observation_id="obs-atomic-correction", canonical_url="https://example.test/atomic/correction",
+            record_kind="correction",
+        )
+        self.positive_review(a, b, key="atomic-invalidation-positive")
+        state = self.contract.claim_state("claim-1")
+        challenge = self.contract.issue_step_up(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"],
+        )
+        self.contract.decide(
+            self.owner, action="validate_incident", claim_id="claim-1", outcome="valid",
+            expected_version=state["version"], step_up_id=challenge,
+            idempotency_key="atomic-invalidation-valid", rationale="synthetic owner validation",
+        )
+        before_state = self.contract.claim_state("claim-1")
+        before_history = self.contract.decision_count()
+        original = self.contract._graph_changed
+
+        def fail_after_invalidation(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("injected graph invalidation failure")
+
+        with patch.object(self.contract, "_graph_changed", side_effect=fail_after_invalidation):
+            with self.assertRaises(RuntimeError):
+                self.contract.add_lineage_edge(
+                    claim_id="claim-1", parent_record_id=correction, child_record_id=a,
+                    relation="retracts", basis="synthetic rollback exercise",
+                )
+        self.assertEqual(self.contract.claim_state("claim-1"), before_state)
+        self.assertEqual(self.contract.decision_count(), before_history)
+        self.assertEqual(self.contract.active_lineage("claim-1")[0]["record_a"], min(a, b))
+        self.assertEqual(self.contract._db.execute("SELECT COUNT(*) FROM lineage_edges WHERE claim_id='claim-1'").fetchone()[0], 0)
+
+    def test_lineage_edge_endpoints_must_belong_to_claim(self):
+        a = self.add_pair(prefix="edge-owner")[0]
+        other_claim_record = "other-claim-only"
+        self.contract.create_claim("claim-2")
+        self.contract.add_synthetic_record(
+            claim_id="claim-2", record_id=other_claim_record, source_record_id="sr-other-claim",
+            observation_id="obs-other-claim", canonical_url="https://example.test/other-claim",
+        )
+        with self.assertRaises(ContractError):
+            self.contract.add_lineage_edge(
+                claim_id="claim-1", parent_record_id=a, child_record_id=other_claim_record,
+                relation="cites", basis="invalid cross-claim synthetic edge",
+            )
+        self.assertEqual(self.contract._db.execute("SELECT COUNT(*) FROM lineage_edges").fetchone()[0], 0)
+        # Defensive handling for a malformed historical/test-only row bypassing
+        # the public API must fail closed instead of indexing a missing node.
+        self.contract._db.execute(
+            "INSERT INTO lineage_edges(claim_id,parent_record_id,child_record_id,relation,basis,graph_version,created_at) VALUES(?,?,?,?,?,?,?)",
+            ("claim-1", other_claim_record, a, "cites", "synthetic malformed fixture", 1, self.clock.now()),
+        )
+        self.assertEqual(self.contract.pair_assessment("claim-1", a, other_claim_record), "unknown")
 
     def test_reclassification_excludes_active_lineage_without_deleting_history(self):
         a, b = self.add_pair(prefix="reclass")
