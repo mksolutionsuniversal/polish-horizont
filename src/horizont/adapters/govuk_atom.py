@@ -25,7 +25,10 @@ MAX_ENTRIES = 10
 ATOM_NS = "http://www.w3.org/2005/Atom"
 _ATOM = f"{{{ATOM_NS}}}"
 _FORBIDDEN_DECLARATION = re.compile(r"<!\s*(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
-_RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
+_RFC3339 = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+    r"(?P<offset>Z|(?P<sign>[+-])(?P<offset_hour>\d{2}):(?P<offset_minute>\d{2}))$"
+)
 
 
 class GOVUKAtomError(ValueError):
@@ -75,14 +78,33 @@ def _timestamp(value: str | None, field: str) -> str | None:
         return None
     try:
         value = value.strip()
-        if not _RFC3339.fullmatch(value):
+        match = _RFC3339.fullmatch(value)
+        if not match:
             raise ValueError("RFC3339 timestamp required")
+        if match.group("offset") != "Z":
+            offset_hour = int(match.group("offset_hour"))
+            offset_minute = int(match.group("offset_minute"))
+            if offset_hour > 23 or offset_minute > 59:
+                raise ValueError("invalid RFC3339 UTC offset")
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None or parsed.utcoffset() is None:
             raise ValueError("timezone required")
         return normalize_utc(parsed, required=True)
     except (TypeError, ValueError, OverflowError) as exc:
         raise GOVUKAtomError(f"{field} must be a valid timezone-aware timestamp") from exc
+
+
+def _collected_timestamp(value: str | datetime) -> str:
+    """Validate text offsets locally before shared UTC normalization."""
+    if isinstance(value, str):
+        normalized = _timestamp(value, "collected_at")
+        if normalized is None:
+            raise GOVUKAtomError("collected_at must be a timezone-aware timestamp")
+        return normalized
+    try:
+        return normalize_utc(value, required=True)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise GOVUKAtomError("collected_at must be a timezone-aware timestamp") from exc
 
 
 def _text(element: ET.Element | None, field: str, *, required: bool) -> str | None:
@@ -134,10 +156,7 @@ def parse_feed(xml_payload: bytes | str, *, collected_at: str | datetime) -> Pub
     Entry timestamps remain distinct: publication/update times never imply an
     occurrence time; collection time is supplied by the caller.
     """
-    try:
-        collected = normalize_utc(collected_at, required=True)
-    except (TypeError, ValueError) as exc:
-        raise GOVUKAtomError("collected_at must be timezone-aware") from exc
+    collected = _collected_timestamp(collected_at)
     if isinstance(xml_payload, str):
         try:
             raw = xml_payload.encode("utf-8")
@@ -208,10 +227,7 @@ def parse_feed(xml_payload: bytes | str, *, collected_at: str | datetime) -> Pub
 def ingest_payload(connection: sqlite3.Connection, xml_payload: bytes | str, *,
                    collected_at: str | datetime) -> IngestResult:
     """Import supplied XML via existing SQLite core in one atomic batch."""
-    try:
-        collection_time = normalize_utc(collected_at, required=True)
-    except (TypeError, ValueError) as exc:
-        raise GOVUKAtomError("collected_at must be timezone-aware") from exc
+    collection_time = _collected_timestamp(collected_at)
     if connection.in_transaction:
         raise GOVUKAtomError("ingest_payload requires no caller-owned active transaction")
     if connection.execute("SELECT 1 FROM sources WHERE id=?", (SOURCE_ID,)).fetchone() is None:

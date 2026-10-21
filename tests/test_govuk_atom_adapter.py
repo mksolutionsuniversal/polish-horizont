@@ -88,6 +88,50 @@ class GOVUKAtomAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(GOVUKAtomError, "collected_at"):
             parse_feed(feed(""), collected_at="2026-10-21T10:00:00")
 
+    def test_rejects_invalid_offset_components_in_every_atom_timestamp(self):
+        invalid_offsets = ("+00:99", "-10:90", "+24:00", "+00:60")
+        for offset in invalid_offsets:
+            malformed_time = f"2026-10-21T10:00:00{offset}"
+            timestamp_cases = (
+                feed("").replace("2026-10-21T09:00:00Z", malformed_time),
+                feed(entry("published", "Bad published", "https://example.test/published",
+                           f"<published>{malformed_time}</published>")),
+                feed(entry("updated", "Bad updated", "https://example.test/updated",
+                           f"<updated>{malformed_time}</updated>")),
+            )
+            for document in timestamp_cases:
+                with self.subTest(offset=offset, document=document[:80]), self.assertRaises(GOVUKAtomError):
+                    parse_feed(document, collected_at=COLLECTED)
+
+            # A malformed collection offset must fail before the importer
+            # creates a source or run, so no event/provenance can be written.
+            with self.subTest(offset=offset, collection="parse"), self.assertRaises(GOVUKAtomError):
+                parse_feed(feed(""), collected_at=f"2026-10-21T10:00:00{offset}")
+            with self.subTest(offset=offset, collection="import"), self.assertRaises(GOVUKAtomError):
+                ingest_payload(self.connection, self.xml, collected_at=f"2026-10-21T10:00:00{offset}")
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM sources").fetchone()[0], 0)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM ingest_runs").fetchone()[0], 0)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM events").fetchone()[0], 0)
+
+    def test_valid_utc_and_numeric_offsets_are_preserved_as_expected(self):
+        document = feed(entry("valid", "Valid", "https://example.test/valid",
+                              "<published>2026-10-21T10:00:00+01:00</published>"
+                              "<updated>2026-10-21T09:00:00Z</updated>"))
+        batch = parse_feed(document, collected_at="2026-10-21T10:00:00Z")
+        publication = batch.publications[0]
+        self.assertEqual(publication.published_at, "2026-10-21T09:00:00.000000Z")
+        self.assertEqual(publication.updated_at, "2026-10-21T09:00:00.000000Z")
+        self.assertEqual(batch.collected_at, "2026-10-21T10:00:00.000000Z")
+
+    def test_invalid_atom_offset_marks_import_failed_without_events(self):
+        document = feed(entry("invalid", "Invalid offset", "https://example.test/invalid",
+                              "<published>2026-10-21T10:00:00+00:99</published>"))
+        with self.assertRaises(GOVUKAtomError):
+            ingest_payload(self.connection, document, collected_at=COLLECTED)
+        run = self.connection.execute("SELECT status, items_seen FROM ingest_runs").fetchone()
+        self.assertEqual(tuple(run), ("failed", 0))
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM events").fetchone()[0], 0)
+
     def test_rejects_namespace_shape_dtd_entities_and_oversized_xml(self):
         good_entry = entry("urn:x", "Synthetic", "https://example.test/x")
         bad_documents = [
