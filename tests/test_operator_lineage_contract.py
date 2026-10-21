@@ -619,12 +619,18 @@ class OperatorLineageContractTests(unittest.TestCase):
         with self.assertRaises(ContractDenied):
             self.contract._decide_claim(
                 self.owner, action="accept_independence", claim_id="publication-claim",
-                outcome="independent", expected_version=0, step_up_id=None,
+                outcome="independent", expected_version=0, step_up_id=challenge,
                 idempotency_key="publication-private-path-denied", rationale="must be rejected",
                 details=details, graph_version=self.contract.graph_version("publication-claim"),
                 pair=tuple(sorted((a, b))),
             )
         self.assertEqual(self.contract.decision_count(), before)
+        self.assertEqual(self.contract.claim_state("publication-claim")["version"], 0)
+        self.assertIsNone(
+            self.contract._db.execute(
+                "SELECT consumed_at FROM stepups WHERE challenge_id=?", (challenge,),
+            ).fetchone()[0]
+        )
         self.assertEqual(self.contract.active_lineage("publication-claim"), [])
 
     def test_publication_roundtrip_requires_new_positive_owner_attestation(self):
