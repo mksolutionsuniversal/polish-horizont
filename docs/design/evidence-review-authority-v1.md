@@ -41,7 +41,10 @@ experimental module.
   classification is an accepted `incident_hypothesis`. A publication or
   unclassified legacy row cannot be used as an incident hypothesis target.
 - Do not interpret v2 `events.validation_status='valid'` as proof of a physical
-  incident, and do not auto-convert it into an accepted v3 decision.
+  incident, and do not auto-convert it into an accepted v3 decision. The spike
+  keeps this column as historical v2 state; effective v3 hypothesis status
+  comes only from `event_hypothesis_history` and defaults to `pending` until an
+  explicit owner decision. V3 decisions do not rewrite the v2 column.
 - Preserve old decisions. A correction or revocation appends an auditable
   superseding entry; it does not rewrite actor, rationale, or timestamp.
 
@@ -55,6 +58,12 @@ guard, append-only histories, and rollback. This is an API-level prototype
 check, not authentication: a party with arbitrary Python execution or direct
 SQLite write access can bypass application checks. No such code is connected
 to the deployed application by this PR.
+
+For the synthetic independence check, evidence from the same
+`source_record_id`, observation, or canonical URL cannot be approved as
+independent. Distinct source-record IDs and URLs in the positive fixture are
+only an explicit test assumption; they do not prove editorial independence.
+The spike has no production lineage-attestation mechanism.
 
 ## Decisions still open
 

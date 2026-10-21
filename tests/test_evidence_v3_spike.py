@@ -57,6 +57,32 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         # is not treated as a semantic or independent confirmation.
         self.assertEqual(spike.legacy_event_semantics(self.db)[-1], (3, "unclassified", "valid"))
 
+    def test_legacy_valid_and_invalid_statuses_do_not_seed_v3_hypothesis_status(self):
+        db = spike.new_synthetic_v2()
+        self.addCleanup(db.close)
+        db.execute("UPDATE events SET validation_status='valid' WHERE id=1")
+        db.execute("UPDATE events SET validation_status='invalid' WHERE id=2")
+        db.commit()
+        spike.apply_candidate_v3(db)
+        owner = spike.synthetic_test_owner_authorizer(db)
+        spike.accept_classification(db, event_id=1, semantic_kind="incident_hypothesis", rationale="fictional v2-valid row classification", authorizer=owner)
+        spike.accept_classification(db, event_id=2, semantic_kind="incident_hypothesis", rationale="fictional v2-invalid row classification", authorizer=owner)
+        self.assertEqual(spike.effective_v3_hypothesis_status(db, 1), "pending")
+        self.assertEqual(spike.effective_v3_hypothesis_status(db, 2), "pending")
+        self.assertEqual(
+            [row[2] for row in spike.legacy_event_semantics(db)[:2]],
+            ["valid", "invalid"],
+        )
+        spike.set_incident_validation(db, event_id=1, status="invalid", rationale="explicit synthetic owner review", authorizer=owner)
+        spike.set_incident_validation(db, event_id=2, status="valid", rationale="explicit synthetic owner review", authorizer=owner)
+        self.assertEqual(spike.effective_v3_hypothesis_status(db, 1), "invalid")
+        self.assertEqual(spike.effective_v3_hypothesis_status(db, 2), "valid")
+        self.assertEqual(
+            [row[2] for row in spike.legacy_event_semantics(db)[:2]],
+            ["valid", "invalid"],
+        )
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM event_hypothesis_history").fetchone()[0], 2)
+
     def test_foreign_keys_enforce_source_consistent_run_and_record(self):
         rid = self.make_record()
         with self.assertRaises(sqlite3.IntegrityError):
@@ -232,6 +258,7 @@ class EvidenceV3SpikeTests(unittest.TestCase):
             spike.accept_classification(other, event_id=2, semantic_kind="incident_hypothesis", rationale="synthetic", authorizer=owner)
         decision = spike.accept_classification(self.db, event_id=2, semantic_kind="incident_hypothesis", rationale="fictional owner review", authorizer=owner)
         self.assertGreater(decision, 0)
+        self.assertEqual(spike.effective_v3_hypothesis_status(self.db, 2), "pending")
         self.assertEqual(self.db.execute("SELECT validation_status FROM events WHERE id=2").fetchone()[0], "pending")
 
     def test_unclassified_and_publication_rows_cannot_receive_hypothesis_evidence(self):
@@ -305,10 +332,11 @@ class EvidenceV3SpikeTests(unittest.TestCase):
             self.db.execute("UPDATE events SET validation_status='valid' WHERE id=1")
         self.db.rollback()
         spike.set_incident_validation(self.db, event_id=2, status="valid", rationale="explicit fictional owner decision", authorizer=owner)
-        self.assertEqual(self.db.execute("SELECT validation_status FROM events WHERE id=2").fetchone()[0], "valid")
+        self.assertEqual(spike.effective_v3_hypothesis_status(self.db, 2), "valid")
+        self.assertEqual(self.db.execute("SELECT validation_status FROM events WHERE id=2").fetchone()[0], "pending")
         with self.assertRaises(PermissionError):
             spike.accept_classification(self.db, event_id=2, semantic_kind="publication_record", rationale="unsafe reclassification", authorizer=owner)
-        self.assertEqual(spike.legacy_event_semantics(self.db)[1][1:], ("incident_hypothesis", "valid"))
+        self.assertEqual(spike.legacy_event_semantics(self.db)[1][1:], ("incident_hypothesis", "pending"))
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(
                 """INSERT INTO event_semantic_history(event_id,semantic_kind,decision_state,actor_kind,actor_label,decided_at,rationale)
@@ -341,7 +369,7 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             spike.accept_independence(self.db, evidence_id=evidence_a, independent=True, rationale="same observation reused", authorizer=owner)
 
-    def test_independence_accepts_demonstrably_distinct_lineage(self):
+    def test_independence_rejects_two_revisions_of_one_source_record(self):
         owner = spike.synthetic_test_owner_authorizer(self.db)
         spike.accept_classification(self.db, event_id=2, semantic_kind="incident_hypothesis", rationale="fictional", authorizer=owner)
         record = self.make_record()
@@ -350,8 +378,25 @@ class EvidenceV3SpikeTests(unittest.TestCase):
             observation(record, 4, "b", "2026-01-03T00:00:00Z", canonical_url="https://example.test/synthetic/b"),
         ], authorizer=self.collector)
         evidence_a = spike.add_evidence_proposal(self.db, observation_id=obs_a, event_id=2, claim_key="occurrence", relation="supports", role="ai")
-        evidence_b = spike.add_evidence_proposal(self.db, observation_id=obs_b, event_id=2, claim_key="occurrence", relation="supports", role="ai")
-        accepted = spike.accept_independence(self.db, evidence_id=evidence_a, independent=True, rationale="distinct synthetic observations and URLs reviewed", authorizer=owner)
+        spike.add_evidence_proposal(self.db, observation_id=obs_b, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        with self.assertRaises(PermissionError):
+            spike.accept_independence(self.db, evidence_id=evidence_a, independent=True, rationale="two revisions of one provider record", authorizer=owner)
+
+    def test_independence_allows_distinct_records_under_synthetic_fixture_assumption(self):
+        owner = spike.synthetic_test_owner_authorizer(self.db)
+        spike.accept_classification(self.db, event_id=2, semantic_kind="incident_hypothesis", rationale="fictional", authorizer=owner)
+        record_a = self.make_record(external_id="fictional-origin-a")
+        record_b = self.make_record(external_id="fictional-origin-b")
+        obs_a = spike.add_observations(self.db, [
+            observation(record_a, 3, "a", "2026-01-02T00:00:00Z", canonical_url="https://example.test/synthetic/a"),
+        ], authorizer=self.collector)[0]
+        obs_b = spike.add_observations(self.db, [
+            observation(record_b, 4, "b", "2026-01-03T00:00:00Z", canonical_url="https://example.test/synthetic/b"),
+        ], authorizer=self.collector)[0]
+        evidence_a = spike.add_evidence_proposal(self.db, observation_id=obs_a, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        spike.add_evidence_proposal(self.db, observation_id=obs_b, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        # Distinct identities/URLs are a fixture assumption, not proof of independent editorial origin.
+        accepted = spike.accept_independence(self.db, evidence_id=evidence_a, independent=True, rationale="synthetic fixture assumes distinct editorial origins", authorizer=owner)
         self.assertEqual(self.db.execute("SELECT independence_state FROM event_evidence WHERE id=?", (accepted,)).fetchone()[0], "independent")
 
 

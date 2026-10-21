@@ -27,8 +27,17 @@ hashing. `collected_at`, source/run identifiers,
 and any caller-supplied `revision_hash` are excluded. This is a prototype
 metadata revision key, not a content-integrity or authenticity signature.
 
-An accepted `incident_hypothesis` with `validation_status='valid'` cannot be
-reclassified in this spike. Independence approval requires a comparator for
-the same event claim and distinct observation IDs and canonical URLs; repeated
-observations and GDELT/publisher records pointing at the same URL fail closed.
-These checks are synthetic prototype rules, not production authorization.
+The legacy `events.validation_status` value is preserved as historical v2 data.
+The v3 effective hypothesis status is derived only from
+`event_hypothesis_history`; it is `pending` until an explicit owner decision
+exists, regardless of a legacy `valid` or `invalid` value. New v3 decisions do
+not rewrite the v2 field. A v3 `valid` hypothesis cannot be reclassified in
+this spike.
+
+Independence approval requires a comparator for the same event claim with a
+different observation, `source_record_id`, and canonical URL. Revisions of one
+source record and GDELT/publisher records pointing at the same URL fail closed.
+Even distinct source-record IDs and URLs do not establish editorial
+independence: the positive synthetic test assumes separate origins as fixture
+setup because this spike has no real lineage-attestation model. These are
+synthetic prototype rules, not production authorization.

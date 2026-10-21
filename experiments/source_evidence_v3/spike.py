@@ -243,7 +243,11 @@ def _create_v3_tables(db: sqlite3.Connection) -> None:
         BEFORE INSERT ON event_semantic_history
         WHEN NEW.decision_state = 'accepted'
           AND NEW.semantic_kind <> 'incident_hypothesis'
-          AND EXISTS (SELECT 1 FROM events WHERE id=NEW.event_id AND validation_status='valid')
+          AND EXISTS (
+            SELECT 1 FROM event_hypothesis_history h
+            WHERE h.event_id=NEW.event_id AND h.validation_status='valid'
+              AND h.id=(SELECT MAX(h2.id) FROM event_hypothesis_history h2 WHERE h2.event_id=NEW.event_id)
+          )
           AND EXISTS (
             SELECT 1 FROM event_semantic_history h
             WHERE h.id=(SELECT MAX(h2.id) FROM event_semantic_history h2
@@ -480,10 +484,10 @@ def accept_classification(
     if not rationale:
         raise ValueError("owner rationale is required")
     with _atomic(db):
-        current = db.execute("SELECT validation_status FROM events WHERE id=?", (event_id,)).fetchone()
+        current = db.execute("SELECT id FROM events WHERE id=?", (event_id,)).fetchone()
         if current is None:
             raise ValueError("unknown event")
-        if current[0] == "valid" and _latest_classification(db, event_id) == "incident_hypothesis" and semantic_kind != "incident_hypothesis":
+        if effective_v3_hypothesis_status(db, event_id) == "valid" and semantic_kind != "incident_hypothesis":
             raise PermissionError("valid incident classification cannot be withdrawn in this prototype")
         previous = db.execute(
             "SELECT id FROM event_semantic_history WHERE event_id=? ORDER BY id DESC LIMIT 1", (event_id,)
@@ -562,24 +566,28 @@ def accept_independence(
             raise PermissionError("event is not an accepted incident hypothesis")
         if independent:
             origin = db.execute(
-                """SELECT o.canonical_url FROM source_record_observations o WHERE o.id=?""",
+                """SELECT o.source_record_id,o.canonical_url
+                   FROM source_record_observations o WHERE o.id=?""",
                 (prior["observation_id"],),
             ).fetchone()
-            if origin is None or not origin[0]:
+            if origin is None or not origin["canonical_url"]:
                 raise PermissionError("independence cannot be approved without a canonical URL")
             comparators = db.execute(
-                """SELECT e.observation_id,o.canonical_url
+                """SELECT e.observation_id,o.source_record_id,o.canonical_url
                    FROM event_evidence e JOIN source_record_observations o ON o.id=e.observation_id
                    WHERE e.event_id=? AND e.claim_key=? AND e.id<>?""",
                 (prior["event_id"], prior["claim_key"], evidence_id),
             ).fetchall()
             if not comparators or any(
                 row["observation_id"] == prior["observation_id"]
+                or row["source_record_id"] == origin["source_record_id"]
                 or not row["canonical_url"]
-                or row["canonical_url"] == origin[0]
+                or row["canonical_url"] == origin["canonical_url"]
                 for row in comparators
             ):
-                raise PermissionError("independence cannot be demonstrated from distinct observations and canonical URLs")
+                raise PermissionError("independence cannot be approved for the same source record, observation, or canonical URL")
+            # Distinct source-record IDs and URLs are only a synthetic fixture
+            # assumption here; this prototype has no editorial-lineage attestation.
         cur = db.execute(
             """INSERT INTO event_evidence(
                 observation_id,event_id,claim_key,relation,independence_state,decision_state,
@@ -604,10 +612,9 @@ def set_incident_validation(
     if not rationale:
         raise ValueError("owner rationale is required")
     with _atomic(db):
-        row = db.execute("SELECT validation_status FROM events WHERE id=?", (event_id,)).fetchone()
+        row = db.execute("SELECT id FROM events WHERE id=?", (event_id,)).fetchone()
         if row is None:
             raise ValueError("unknown event")
-        db.execute("UPDATE events SET validation_status=? WHERE id=?", (status, event_id))
         db.execute(
             "INSERT INTO event_hypothesis_history(event_id,validation_status,actor_label,decided_at,rationale) VALUES (?,?,?,?,?)",
             (event_id,status,actor.actor_label,_now(),rationale),
@@ -626,7 +633,7 @@ def _latest_classification(db: sqlite3.Connection, event_id: int) -> str | None:
 
 
 def legacy_event_semantics(db: sqlite3.Connection) -> list[tuple[int, str, str]]:
-    """Read-only synthetic view: accepted decisions only; absent = unclassified."""
+    """Return semantic classification and untouched SQLite v2 validation_status."""
     _require_synthetic_memory_db(db, versions=(3,))
     if db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] != 3:
         raise ValueError("v3 spike has not been applied")
@@ -636,6 +643,20 @@ def legacy_event_semantics(db: sqlite3.Connection) -> list[tuple[int, str, str]]
         classification = _latest_classification(db, int(row["id"])) or "unclassified"
         result.append((int(row["id"]), classification, str(row["validation_status"])))
     return result
+
+
+def effective_v3_hypothesis_status(db: sqlite3.Connection, event_id: int) -> str | None:
+    """Return v3 status from explicit audit history; legacy v2 status is never inherited."""
+    _require_synthetic_memory_db(db, versions=(3,))
+    if db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] != 3:
+        raise ValueError("v3 spike has not been applied")
+    if _latest_classification(db, event_id) != "incident_hypothesis":
+        return None
+    row = db.execute(
+        "SELECT validation_status FROM event_hypothesis_history WHERE event_id=? ORDER BY id DESC LIMIT 1",
+        (event_id,),
+    ).fetchone()
+    return str(row[0]) if row is not None else "pending"
 
 
 def _now() -> str:
