@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>https://example.test/feeds/news</id>
+  <title>Synthetic GOV.UK news feed</title>
+  <updated>2026-10-21T09:00:00Z</updated>
+  <entry>
+    <id>urn:example:test:notice:alpha</id>
+    <title>Syntetyczny komunikat urzędowy — ćwiczenie</title>
+    <link rel="alternate" type="text/html" href="https://example.test/notices/alpha#top" />
+    <published>2026-10-20T10:30:00+01:00</published>
+    <updated>2026-10-21T08:45:00Z</updated>
+    <summary>Fikcyjny opis wyłącznie do testów.</summary>
+  </entry>
+  <entry>
+    <id>urn:example:test:notice:beta</id>
+    <title>Synthetic notice with unknown dates</title>
+    <link rel="alternate" type="text/html" href="https://example.test/notices/beta" />
+  </entry>
+</feed>
