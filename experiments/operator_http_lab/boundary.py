@@ -276,7 +276,8 @@ class OperatorHttpLab:
                     self._fail(400, "invalid_request")
                     return None
                 lengths = self.headers.get_all("Content-Length", [])
-                if len(lengths) != 1 or not lengths[0].isdigit():
+                if (len(lengths) != 1 or
+                        re.fullmatch(r"[0-9]{1,10}", lengths[0]) is None):
                     self._fail(400, "invalid_request")
                     return None
                 length = int(lengths[0])

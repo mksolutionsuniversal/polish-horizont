@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http.client import HTTPConnection
 import json
 import threading
 import unittest
@@ -272,6 +273,29 @@ class OperatorHttpLabTests(unittest.TestCase):
         fields, challenge = self.prepare_operation(cookie, csrf)
         self.assertEqual(self.submit_operation(cookie, csrf, {**fields, "outcome": "nonsense"}, challenge)[0], 400)
         self.assertEqual(self.contract.decision_count(), 0)
+
+    def test_content_length_requires_bounded_ascii_digits_and_server_recovers(self):
+        _, cookie, _, _ = self.login()
+        for value in ("²", "9" * 4301):
+            with self.subTest(length_chars=len(value)):
+                connection = HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=3)
+                try:
+                    connection.putrequest("POST", "/api/session/revoke")
+                    connection.putheader("Host", self.HOST)
+                    connection.putheader("Origin", self.ORIGIN)
+                    connection.putheader("Cookie", cookie)
+                    connection.putheader("Content-Type", "application/json")
+                    connection.putheader("X-CSRF-Token", "test")
+                    connection.putheader("Content-Length", value)
+                    connection.endheaders()
+                    response = connection.getresponse()
+                    self.assertGreaterEqual(response.status, 400)
+                    self.assertLess(response.status, 500)
+                    response.read()
+                finally:
+                    connection.close()
+                self.assertEqual(self.csrf(cookie)[0], 200)
+                self.assertEqual(self.contract.decision_count(), 0)
 
     def test_loopback_cookie_origin_csp_and_sanitized_read_model(self):
         self.assertEqual(self.server.server_address[0], "127.0.0.1")
