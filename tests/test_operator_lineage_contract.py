@@ -596,6 +596,90 @@ class OperatorLineageContractTests(unittest.TestCase):
                 key="roundtrip-without-new-attestation",
             )
 
+    def test_publication_claim_cannot_receive_positive_independence_audit(self):
+        self.contract.create_claim("publication-claim", semantic_kind="publication_record")
+        a, b = self.add_pair(claim_id="publication-claim", prefix="publication-positive-deny")
+        details = self.contract.independence_details(
+            "publication-claim", a, b, reporting_basis_a="synthetic basis A",
+            reporting_basis_b="synthetic basis B", owner_attests_distinct_origins=True,
+        )
+        challenge = self.contract.issue_step_up(
+            self.owner, action="accept_independence", claim_id="publication-claim",
+            outcome="independent", expected_version=0, details=details,
+        )
+        before = self.contract.decision_count()
+        with self.assertRaises(ContractDenied):
+            self.contract.review_independence(
+                self.owner, claim_id="publication-claim", record_a=a, record_b=b,
+                outcome="independent", reporting_basis_a="synthetic basis A",
+                reporting_basis_b="synthetic basis B", owner_attests_distinct_origins=True,
+                expected_version=0, step_up_id=challenge,
+                idempotency_key="publication-positive-denied", rationale="must be rejected",
+            )
+        with self.assertRaises(ContractDenied):
+            self.contract._decide_claim(
+                self.owner, action="accept_independence", claim_id="publication-claim",
+                outcome="independent", expected_version=0, step_up_id=None,
+                idempotency_key="publication-private-path-denied", rationale="must be rejected",
+                details=details, graph_version=self.contract.graph_version("publication-claim"),
+                pair=tuple(sorted((a, b))),
+            )
+        self.assertEqual(self.contract.decision_count(), before)
+        self.assertEqual(self.contract.active_lineage("publication-claim"), [])
+
+    def test_publication_roundtrip_requires_new_positive_owner_attestation(self):
+        a, b = self.add_pair(prefix="publication-roundtrip")
+        self.positive_review(a, b, key="publication-roundtrip-original")
+        state = self.contract.claim_state("claim-1")
+        self.decision(
+            action="accept_classification", outcome="publication_record",
+            expected_version=state["version"], key="publication-roundtrip-to-publication",
+        )
+        state = self.contract.claim_state("claim-1")
+        rejected_details = self.contract.independence_details(
+            "claim-1", a, b, reporting_basis_a="synthetic re-attestation A",
+            reporting_basis_b="synthetic re-attestation B", owner_attests_distinct_origins=True,
+        )
+        rejected_stepup = self.contract.issue_step_up(
+            self.owner, action="accept_independence", claim_id="claim-1",
+            outcome="independent", expected_version=state["version"], details=rejected_details,
+        )
+        before = self.contract.decision_count()
+        with self.assertRaises(ContractDenied):
+            self.contract.review_independence(
+                self.owner, claim_id="claim-1", record_a=a, record_b=b,
+                outcome="independent", reporting_basis_a="synthetic re-attestation A",
+                reporting_basis_b="synthetic re-attestation B", owner_attests_distinct_origins=True,
+                expected_version=state["version"], step_up_id=rejected_stepup,
+                idempotency_key="publication-roundtrip-denied", rationale="cannot attest publication",
+            )
+        self.assertEqual(self.contract.decision_count(), before)
+        state = self.contract.claim_state("claim-1")
+        self.decision(
+            action="accept_classification", outcome="incident_hypothesis",
+            expected_version=state["version"], key="publication-roundtrip-back-to-incident",
+        )
+        self.assertEqual(self.contract.active_lineage("claim-1"), [])
+        basis_a, basis_b = "fresh synthetic origin A", "fresh synthetic origin B"
+        fresh_details = self.contract.independence_details(
+            "claim-1", a, b, reporting_basis_a=basis_a, reporting_basis_b=basis_b,
+            owner_attests_distinct_origins=True,
+        )
+        state = self.contract.claim_state("claim-1")
+        fresh_stepup = self.contract.issue_step_up(
+            self.owner, action="accept_independence", claim_id="claim-1",
+            outcome="independent", expected_version=state["version"],
+            graph_version=state["graph_version"], details=fresh_details,
+        )
+        self.contract.review_independence(
+            self.owner, claim_id="claim-1", record_a=a, record_b=b, outcome="independent",
+            reporting_basis_a=basis_a, reporting_basis_b=basis_b,
+            owner_attests_distinct_origins=True, expected_version=state["version"],
+            step_up_id=fresh_stepup, idempotency_key="publication-roundtrip-fresh-attestation",
+            rationale="explicit fresh owner review after classification roundtrip",
+        )
+        self.assertEqual(len(self.contract.active_lineage("claim-1")), 1)
+
     def test_independence_retry_after_graph_change_returns_history_not_current_validity(self):
         a, b = self.add_pair(prefix="historical-retry")
         basis_a = "fictional separately gathered interview"

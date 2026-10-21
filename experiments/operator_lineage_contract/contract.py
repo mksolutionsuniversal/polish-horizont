@@ -475,6 +475,9 @@ class OperatorLineageContract:
                 if existing["actor_ref"] == session["actor_ref"] and existing["request_digest"] == request_digest:
                     return int(existing["id"])
                 raise ContractDenied("idempotency key was reused with different content or actor")
+            if (action == "accept_independence" and outcome == "independent" and
+                    claim["semantic_kind"] != "incident_hypothesis"):
+                raise ContractDenied("positive independence applies only to an incident hypothesis")
             if claim["version"] != expected_version:
                 raise ContractConflict("claim version is stale")
             if graph_version is not None and graph_version != current_graph:
@@ -592,6 +595,9 @@ class OperatorLineageContract:
                 if same_request:
                     return int(existing["id"])
                 raise ContractDenied("idempotency key was reused with different content or actor")
+        claim = self._claim(claim_id)
+        if outcome == "independent" and claim["semantic_kind"] != "incident_hypothesis":
+            raise ContractDenied("positive independence applies only to an incident hypothesis")
         assessment = self.pair_assessment(claim_id, pair[0], pair[1])
         if outcome == "independent":
             if assessment != "candidate":

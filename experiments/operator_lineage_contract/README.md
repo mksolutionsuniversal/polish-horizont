@@ -38,6 +38,9 @@ deny positive review. Structural graph disjointness alone never grants
 independence: an owner step-up must attest to distinct original-reporting
 bases for the named claim. Even this assertion is only a synthetic fixture
 assumption, not verified journalism or proof of real editorial independence.
+Positive independence can only be accepted while the claim is classified as
+an `incident_hypothesis`; publication records cannot receive reusable
+positive attestations.
 
 Adding lineage after a positive review appends a synthetic invalidation entry,
 supersedes the previous assessment, removes it from the active view, and moves
