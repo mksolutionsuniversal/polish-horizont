@@ -88,3 +88,19 @@ real identity assurance, cryptographic assertion verification, browser CSRF
 behavior, or production audit durability. Rollback is limited to deleting this
 experiment, its tests, and this decision memo; no production data or schema is
 modified.
+
+### Review hardening
+
+The injected backend must enter the supplied `commit_guard` immediately around
+its local atomic write, after any potentially blocking preparation. This guard
+serializes commit with revocation per HTTP session and rechecks expiry. The
+synthetic backend follows that contract; adapting an external backend requires
+its own transaction-bound capability design. A commit already inside the guard
+linearizes before a concurrent revocation; revocation returns only after that
+write completes. No global lock surrounds backend preparation.
+
+Known LAB limitation (P3): this dormant loopback server still uses unbounded
+thread-per-connection handling and has no incomplete-request read timeout.
+It must not be exposed or reused as a deployment server. Bounded connections
+and slow-client/timeouts remain required before any broader HTTP experiment;
+this change makes no claim about the earlier host stalled-socket issue.

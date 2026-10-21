@@ -8,6 +8,7 @@ loopback and an ephemeral port for short-lived tests.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -102,6 +103,7 @@ class _Session:
     csrf_token: str
     expires_at: int
     revoked: bool = False
+    commit_lock: Any = None
 
 
 class _SessionStore:
@@ -119,7 +121,7 @@ class _SessionStore:
 
     def issue(self, identity: VerifiedIdentity) -> tuple[str, _Session]:
         token = secrets.token_urlsafe(32)
-        session = _Session(identity, secrets.token_urlsafe(24), self._clock() + self._ttl)
+        session = _Session(identity, secrets.token_urlsafe(24), self._clock() + self._ttl, commit_lock=threading.RLock())
         with self._lock:
             self._sessions[self._key(token)] = session
         return token, session
@@ -149,7 +151,8 @@ class _SessionStore:
         with self._lock:
             session = self._sessions.get(key)
             if session is not None:
-                session.revoked = True
+                with session.commit_lock:
+                    session.revoked = True
 
 
 class OperatorHttpLab:
@@ -177,7 +180,10 @@ class OperatorHttpLab:
         self._lock = threading.RLock()
 
     def _revoke_session(self, token: str) -> None:
-        key = _SessionStore._key(token)
+        try:
+            key = _SessionStore._key(token)
+        except UnicodeEncodeError:
+            return
         self.sessions.revoke(token)
         with self._lock:
             self._stepups = {
@@ -259,7 +265,8 @@ class OperatorHttpLab:
 
             def _csrf(self, session: _Session) -> bool:
                 values = self.headers.get_all("X-CSRF-Token", [])
-                return len(values) == 1 and hmac.compare_digest(values[0], session.csrf_token)
+                return (len(values) == 1 and values[0].isascii() and
+                        hmac.compare_digest(values[0], session.csrf_token))
 
             def _json(self) -> dict[str, Any] | None:
                 if self.headers.get_all("Authorization", []):
@@ -442,7 +449,7 @@ class OperatorHttpLab:
                 if set(data) != required:
                     self._fail(400, "invalid_request")
                     return
-                if (data["action"] not in lab._ACTIONS or
+                if (not isinstance(data["action"], str) or data["action"] not in lab._ACTIONS or
                         not isinstance(data["outcome"], str) or
                         type(data["expected_version"]) is not int or data["expected_version"] < 0 or
                         type(data["graph_version"]) is not int or data["graph_version"] < 0 or
@@ -451,6 +458,11 @@ class OperatorHttpLab:
                         len(data["idempotency_key"]) > 128 or
                         not isinstance(data["rationale"], str) or not data["rationale"].strip() or
                         len(data["rationale"]) > 1000 or not isinstance(data["details"], dict)):
+                    self._fail(400, "invalid_request")
+                    return
+                allowed = {"accept_classification": {"incident_hypothesis", "publication_record", "other_or_unknown"},
+                           "validate_incident": {"valid", "invalid", "pending"}}
+                if data["outcome"] not in allowed[data["action"]]:
                     self._fail(400, "invalid_request")
                     return
                 backend = self._authority()
@@ -527,13 +539,22 @@ class OperatorHttpLab:
                         binding[1] != session.identity.subject or binding[2] != expected_binding):
                     self._fail(403, "step_up_denied")
                     return
+                @contextmanager
+                def commit_guard():
+                    # Backend must enter this immediately around its local atomic
+                    # write, after any blocking preparation. No network IO here.
+                    with session.commit_lock:
+                        if session.revoked or lab.clock() >= session.expires_at:
+                            raise BoundaryDenied("session no longer active")
+                        yield
+
                 try:
                     decision_id = backend.decide(
                         session.identity.subject, action=data["action"], claim_id=claim_id,
                         outcome=data["outcome"], expected_version=data["expected_version"],
                         graph_version=data["graph_version"], step_up_id=step_up_id,
                         idempotency_key=data["idempotency_key"], rationale=data["rationale"].strip(),
-                        details=details,
+                        details=details, commit_guard=commit_guard,
                     )
                 except BoundaryDenied:
                     self._fail(403, "forbidden")

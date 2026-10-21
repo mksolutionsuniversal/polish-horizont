@@ -100,7 +100,9 @@ class ContractBackend:
     def decide(self, actor_ref: str, **request):
         context = self._context(actor_ref)
         try:
-            return self.contract.decide(context, **request)
+            guard = request.pop("commit_guard")
+            with guard():
+                return self.contract.decide(context, **request)
         except ContractDenied as exc:
             raise BoundaryDenied(str(exc)) from exc
         except ContractConflict as exc:
@@ -223,6 +225,53 @@ class OperatorHttpLabTests(unittest.TestCase):
             body={**fields, "step_up_id": step_up_id}, cookie=cookie,
             csrf=csrf, headers=headers,
         )
+
+    def test_malformed_action_csrf_and_old_cookie_are_controlled(self):
+        _, cookie, _, _ = self.login()
+        _, csrf = self.csrf(cookie)
+        fields, challenge = self.prepare_operation(cookie, csrf)
+        for action in ([], {}):
+            self.assertEqual(self.submit_operation(cookie, csrf, {**fields, "action": action}, challenge)[0], 400)
+        self.assertEqual(self.submit_operation(cookie, "é", fields, challenge)[0], 403)
+        self.assertEqual(self.login(prior_cookie=f"{OperatorHttpLab.SESSION_COOKIE}=é")[0], 204)
+        self.assertEqual(self.contract.decision_count(), 0)
+        self.assertEqual(self.csrf(cookie)[0], 200)
+
+    def test_revoke_or_expiry_before_commit_guard_denies_paused_write(self):
+        for expire in (False, True):
+            with self.subTest(expire=expire):
+                _, cookie, _, _ = self.login()
+                _, csrf = self.csrf(cookie)
+                fields, challenge = self.prepare_operation(cookie, csrf, key=f"paused-{expire}")
+                entered, release = threading.Event(), threading.Event()
+                original = self.backend.decide
+                def paused(*args, **kwargs):
+                    entered.set()
+                    if not release.wait(3):
+                        raise AuthorityUnavailable("test timeout")
+                    return original(*args, **kwargs)
+                self.backend.decide = paused
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pending = pool.submit(self.submit_operation, cookie, csrf, fields, challenge)
+                        self.assertTrue(entered.wait(2))
+                        if expire:
+                            self.clock.advance(121)
+                        else:
+                            self.assertEqual(self.request("POST", "/api/session/revoke", body={}, cookie=cookie, csrf=csrf)[0], 204)
+                        release.set()
+                        self.assertEqual(pending.result(timeout=3)[0], 403)
+                finally:
+                    release.set()
+                    self.backend.decide = original
+                self.assertEqual(self.contract.decision_count(), 0)
+
+    def test_invalid_outcome_is_client_error(self):
+        _, cookie, _, _ = self.login()
+        _, csrf = self.csrf(cookie)
+        fields, challenge = self.prepare_operation(cookie, csrf)
+        self.assertEqual(self.submit_operation(cookie, csrf, {**fields, "outcome": "nonsense"}, challenge)[0], 400)
+        self.assertEqual(self.contract.decision_count(), 0)
 
     def test_loopback_cookie_origin_csp_and_sanitized_read_model(self):
         self.assertEqual(self.server.server_address[0], "127.0.0.1")
