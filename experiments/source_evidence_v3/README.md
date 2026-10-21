@@ -21,7 +21,9 @@ sorted-key JSON containing exactly `canonical_url`, `title`, normalized
 `source_published_at`, normalized `source_updated_at`, normalized `gdelt_sqldate`,
 normalized `gdelt_dateadded_at`, `attribution`, `licence_uri`, and
 `geo_source_fields`. Missing values are JSON `null`; timestamp offsets and
-SQLDATE are normalized before hashing. `collected_at`, source/run identifiers,
+SQLDATE are normalized before hashing. Text values are trimmed, line endings
+are converted to LF, and Unicode is normalized to NFC before storage and
+hashing. `collected_at`, source/run identifiers,
 and any caller-supplied `revision_hash` are excluded. This is a prototype
 metadata revision key, not a content-integrity or authenticity signature.
 

@@ -122,12 +122,15 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         rid = self.make_record()
         first = observation(rid, 3, "a", "2026-01-02T10:00:00Z", source_published_at="2026-01-02T11:00:00+01:00")
         first["revision_hash"] = "a" * 64
+        first["title"] = "  Cafe\u0301\r\n"
         second = observation(rid, 4, "a", "2026-01-03T10:00:00Z", source_published_at="2026-01-02T10:00:00Z")
         second["revision_hash"] = "b" * 64
+        second["title"] = "Café"
         spike.add_observations(self.db, [first, second], authorizer=self.collector)
         hashes = [row[0] for row in self.db.execute("SELECT revision_hash FROM source_record_observations ORDER BY id")]
         self.assertEqual(hashes[0], hashes[1])
         self.assertRegex(hashes[0], r"^[0-9a-f]{64}$")
+        self.assertEqual(self.db.execute("SELECT title FROM source_record_observations ORDER BY id LIMIT 1").fetchone()[0], "Café")
 
     def test_same_canonical_url_across_providers_is_not_a_unique_source_identity(self):
         gdelt_id = self.make_record()

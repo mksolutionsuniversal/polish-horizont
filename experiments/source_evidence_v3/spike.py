@@ -16,6 +16,7 @@ import json
 import re
 import sqlite3
 from typing import Iterable, Iterator, Mapping, Any
+import unicodedata
 from urllib.parse import urlsplit
 
 
@@ -393,23 +394,23 @@ def add_observations(
     inserted: list[int] = []
     with _atomic(db):
         for item in observations:
-            for url_field in ("canonical_url", "licence_uri"):
-                candidate_url = item.get(url_field)
-                if candidate_url is not None:
-                    parts = urlsplit(candidate_url)
-                    if parts.scheme != "https" or parts.hostname != "example.test":
-                        raise ValueError(f"{url_field} must use the synthetic example.test domain")
             normalized = {
-                "canonical_url": item.get("canonical_url"),
-                "title": item.get("title"),
+                "canonical_url": _normalize_text(item.get("canonical_url")),
+                "title": _normalize_text(item.get("title")),
                 "source_published_at": normalize_utc(item.get("source_published_at")),
                 "source_updated_at": normalize_utc(item.get("source_updated_at")),
                 "gdelt_sqldate": normalize_sql_date(item.get("gdelt_sqldate")),
                 "gdelt_dateadded_at": normalize_utc(item.get("gdelt_dateadded_at")),
-                "attribution": item.get("attribution"),
-                "licence_uri": item.get("licence_uri"),
-                "geo_source_fields": item.get("geo_source_fields"),
+                "attribution": _normalize_text(item.get("attribution")),
+                "licence_uri": _normalize_text(item.get("licence_uri")),
+                "geo_source_fields": _normalize_text(item.get("geo_source_fields")),
             }
+            for url_field in ("canonical_url", "licence_uri"):
+                candidate_url = normalized[url_field]
+                if candidate_url is not None:
+                    parts = urlsplit(candidate_url)
+                    if parts.scheme != "https" or parts.hostname != "example.test":
+                        raise ValueError(f"{url_field} must use the synthetic example.test domain")
             revision_hash = _revision_hash(normalized)
             values = (
                 int(item["source_record_id"]), item["source_id"], int(item["ingest_run_id"]),
@@ -437,6 +438,14 @@ def _revision_hash(metadata: Mapping[str, Any]) -> str:
         metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _normalize_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("allowlisted text metadata must be strings or null")
+    return unicodedata.normalize("NFC", value.replace("\r\n", "\n").replace("\r", "\n").strip())
 
 
 def propose_classification(
