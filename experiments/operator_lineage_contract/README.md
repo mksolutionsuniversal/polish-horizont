@@ -53,6 +53,11 @@ for the current graph can then appear in the active evidence view, but do not
 change that status; a fresh, explicit owner validation is required to return it
 to `valid`.
 
+An identical idempotent independence retry returns its original audit decision
+even if the graph has since changed. That is only the historical result of the
+request: current corroboration is evaluated separately against the latest
+lineage review and graph version, so the replay cannot restore stale evidence.
+
 `legacy_v2_status` is an immutable fixture-only value. Effective synthetic v3
 status always starts `pending` and changes only through an explicit audited
 decision. This does not modify the production v2 schema or implement a

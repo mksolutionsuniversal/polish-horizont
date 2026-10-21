@@ -500,7 +500,7 @@ class OperatorLineageContractTests(unittest.TestCase):
         self.assertEqual(self.contract._db.execute("SELECT COUNT(*) FROM lineage_edges WHERE claim_id='claim-1'").fetchone()[0], 0)
 
     def test_lineage_edge_endpoints_must_belong_to_claim(self):
-        a = self.add_pair(prefix="edge-owner")[0]
+        a, b = self.add_pair(prefix="edge-owner")
         other_claim_record = "other-claim-only"
         self.contract.create_claim("claim-2")
         self.contract.add_synthetic_record(
@@ -519,7 +519,116 @@ class OperatorLineageContractTests(unittest.TestCase):
             "INSERT INTO lineage_edges(claim_id,parent_record_id,child_record_id,relation,basis,graph_version,created_at) VALUES(?,?,?,?,?,?,?)",
             ("claim-1", other_claim_record, a, "cites", "synthetic malformed fixture", 1, self.clock.now()),
         )
-        self.assertEqual(self.contract.pair_assessment("claim-1", a, other_claim_record), "unknown")
+        self.assertEqual(self.contract.pair_assessment("claim-1", a, b), "unknown")
+
+    def test_dependent_unknown_and_disputed_remove_last_valid_confirmation(self):
+        for outcome in ("dependent", "unknown", "disputed"):
+            with self.subTest(outcome=outcome):
+                contract = OperatorLineageContract(clock=FakeClock())
+                self.addCleanup(contract.close)
+                owner = contract.issue_test_session(actor_ref=f"owner-{outcome}", role="owner")
+                contract.create_claim("claim-x")
+                a = f"{outcome}-a"
+                b = f"{outcome}-b"
+                for record_id, source_id in ((a, f"src-{a}"), (b, f"src-{b}")):
+                    contract.add_synthetic_record(
+                        claim_id="claim-x", record_id=record_id, source_record_id=source_id,
+                        observation_id=f"obs-{record_id}", canonical_url=f"https://example.test/{record_id}",
+                    )
+                def accept(review_outcome, key, version):
+                    basis_a, basis_b = "synthetic report A", "synthetic report B"
+                    attests = review_outcome == "independent"
+                    details = contract.independence_details(
+                        "claim-x", a, b, reporting_basis_a=basis_a if attests else "",
+                        reporting_basis_b=basis_b if attests else "",
+                        owner_attests_distinct_origins=attests,
+                    )
+                    step = contract.issue_step_up(
+                        owner, action="accept_independence", claim_id="claim-x",
+                        outcome=review_outcome, expected_version=version, details=details,
+                    )
+                    contract.review_independence(
+                        owner, claim_id="claim-x", record_a=a, record_b=b,
+                        outcome=review_outcome,
+                        reporting_basis_a=basis_a if attests else "",
+                        reporting_basis_b=basis_b if attests else "",
+                        owner_attests_distinct_origins=attests, expected_version=version,
+                        step_up_id=step, idempotency_key=key,
+                        rationale=f"synthetic {review_outcome} review",
+                    )
+
+                accept("independent", f"positive-{outcome}", 0)
+                state = contract.claim_state("claim-x")
+                validation = contract.issue_step_up(
+                    owner, action="validate_incident", claim_id="claim-x", outcome="valid",
+                    expected_version=state["version"],
+                )
+                contract.decide(
+                    owner, action="validate_incident", claim_id="claim-x", outcome="valid",
+                    expected_version=state["version"], step_up_id=validation,
+                    idempotency_key=f"valid-{outcome}", rationale="synthetic confirmation",
+                )
+                state = contract.claim_state("claim-x")
+                accept(outcome, f"withdraw-{outcome}", state["version"])
+                self.assertEqual(contract.claim_state("claim-x")["effective_status"], "review_required")
+                self.assertEqual(contract.active_lineage("claim-x"), [])
+
+    def test_classification_roundtrip_does_not_restore_old_lineage_attestation(self):
+        a, b = self.add_pair(prefix="classification-roundtrip")
+        self.positive_review(a, b, key="roundtrip-original-attestation")
+        state = self.contract.claim_state("claim-1")
+        self.decision(
+            action="accept_classification", outcome="publication_record",
+            expected_version=state["version"], key="roundtrip-to-publication",
+        )
+        self.assertEqual(self.contract.active_lineage("claim-1"), [])
+        state = self.contract.claim_state("claim-1")
+        self.decision(
+            action="accept_classification", outcome="incident_hypothesis",
+            expected_version=state["version"], key="roundtrip-back-to-incident",
+        )
+        self.assertEqual(self.contract.claim_state("claim-1")["semantic_kind"], "incident_hypothesis")
+        self.assertEqual(self.contract.active_lineage("claim-1"), [])
+        with self.assertRaises(ContractDenied):
+            self.decision(
+                action="validate_incident", outcome="valid",
+                expected_version=self.contract.claim_state("claim-1")["version"],
+                key="roundtrip-without-new-attestation",
+            )
+
+    def test_independence_retry_after_graph_change_returns_history_not_current_validity(self):
+        a, b = self.add_pair(prefix="historical-retry")
+        basis_a = "fictional separately gathered interview"
+        basis_b = "fictional separately obtained record"
+        accepted_id = self.contract.review_independence(
+            self.owner, claim_id="claim-1", record_a=a, record_b=b, outcome="independent",
+            reporting_basis_a=basis_a, reporting_basis_b=basis_b,
+            owner_attests_distinct_origins=True, expected_version=0,
+            step_up_id=self.contract.issue_step_up(
+                self.owner, action="accept_independence", claim_id="claim-1",
+                outcome="independent", expected_version=0,
+                details=self.contract.independence_details(
+                    "claim-1", a, b, reporting_basis_a=basis_a,
+                    reporting_basis_b=basis_b, owner_attests_distinct_origins=True,
+                ),
+            ),
+            idempotency_key="historical-lineage-retry", rationale="synthetic distinct origins",
+        )
+        self.contract.add_lineage_edge(
+            claim_id="claim-1", parent_record_id=a, child_record_id=b,
+            relation="cites", basis="later synthetic graph fact invalidates independence",
+        )
+        replayed_id = self.contract.review_independence(
+            self.owner, claim_id="claim-1", record_a=a, record_b=b, outcome="independent",
+            reporting_basis_a=basis_a, reporting_basis_b=basis_b,
+            owner_attests_distinct_origins=True, expected_version=0,
+            step_up_id=None, idempotency_key="historical-lineage-retry",
+            rationale="synthetic distinct origins",
+        )
+        self.assertEqual(replayed_id, accepted_id)
+        self.assertEqual(self.contract.audit_history(claim_id="claim-1")[0]["outcome"], "independent")
+        self.assertEqual(self.contract.pair_assessment("claim-1", a, b), "dependent")
+        self.assertEqual(self.contract.active_lineage("claim-1"), [])
 
     def test_reclassification_excludes_active_lineage_without_deleting_history(self):
         a, b = self.add_pair(prefix="reclass")

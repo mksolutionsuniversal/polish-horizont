@@ -459,15 +459,19 @@ class OperatorLineageContract:
             request_payload = {
                 "actor": session["actor_ref"], "action": action, "claim": claim_id,
                 "outcome": outcome, "expected_version": expected_version,
-                "graph_version": current_graph, "policy_version": session["policy_version"],
+                "graph_version": current_graph if graph_version is None else graph_version,
+                "policy_version": session["policy_version"],
                 "details": details, "rationale": rationale.strip(),
             }
             request_digest = self._digest(request_payload)
             existing = self._db.execute(
-                "SELECT id,actor_ref,request_digest FROM decision_history WHERE idempotency_key=?",
+                "SELECT id,actor_ref,request_digest,graph_version FROM decision_history WHERE idempotency_key=?",
                 (idempotency_key,),
             ).fetchone()
             if existing:
+                if graph_version is None:
+                    request_payload["graph_version"] = int(existing["graph_version"])
+                    request_digest = self._digest(request_payload)
                 if existing["actor_ref"] == session["actor_ref"] and existing["request_digest"] == request_digest:
                     return int(existing["id"])
                 raise ContractDenied("idempotency key was reused with different content or actor")
@@ -518,12 +522,16 @@ class OperatorLineageContract:
                     "INSERT INTO lineage_reviews(decision_id,claim_id,record_a,record_b,outcome,graph_version) VALUES(?,?,?,?,?,?)",
                     (decision_id, claim_id, pair[0], pair[1], outcome, current_graph),
                 )
-                if outcome == "revoked" and claim["effective_status"] == "valid":
+                if outcome in {"revoked", "dependent", "unknown", "disputed"} and claim["effective_status"] == "valid":
                     if not self.active_lineage(claim_id):
                         self._db.execute(
                             "UPDATE claims SET effective_status='review_required' WHERE claim_id=?",
                             (claim_id,),
                         )
+            if (action == "accept_classification" and
+                    claim["semantic_kind"] == "incident_hypothesis" and
+                    outcome != "incident_hypothesis"):
+                self._graph_changed(claim_id, reason="classification changed away from incident hypothesis")
             return decision_id
 
     def _consume_step_up(
@@ -557,6 +565,33 @@ class OperatorLineageContract:
         if record_a == record_b:
             raise ContractDenied("independence requires two distinct evidence records")
         pair = tuple(sorted((record_a, record_b)))
+        with self._lock:
+            session = self._session(context, owner=True, claim_id=claim_id)
+            existing = self._db.execute(
+                "SELECT * FROM decision_history WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                try:
+                    old_details = json.loads(existing["details"])
+                except (TypeError, json.JSONDecodeError):
+                    raise ContractDenied("idempotency key has an invalid stored decision") from None
+                same_request = (
+                    existing["actor_ref"] == session["actor_ref"]
+                    and existing["action"] == "accept_independence"
+                    and existing["claim_id"] == claim_id
+                    and existing["outcome"] == outcome
+                    and existing["prior_version"] == expected_version
+                    and existing["rationale"] == rationale.strip()
+                    and old_details.get("record_a") == pair[0]
+                    and old_details.get("record_b") == pair[1]
+                    and old_details.get("reporting_basis_a") == reporting_basis_a.strip()
+                    and old_details.get("reporting_basis_b") == reporting_basis_b.strip()
+                    and old_details.get("owner_attests_distinct_origins") == bool(owner_attests_distinct_origins)
+                )
+                if same_request:
+                    return int(existing["id"])
+                raise ContractDenied("idempotency key was reused with different content or actor")
         assessment = self.pair_assessment(claim_id, pair[0], pair[1])
         if outcome == "independent":
             if assessment != "candidate":
