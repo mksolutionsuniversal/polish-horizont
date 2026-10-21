@@ -16,10 +16,9 @@ def observation(record_id: int, run_id: int, digest: str, collected: str, **extr
         "source_record_id": record_id,
         "source_id": "gdelt-raw-events-v2",
         "ingest_run_id": run_id,
-        "revision_hash": digest * 64,
         "collected_at": collected,
         "canonical_url": "https://example.test/synthetic/item",
-        "title": "Fictional generated record",
+        "title": f"Fictional generated record {digest}",
         **extra,
     }
 
@@ -119,6 +118,17 @@ class EvidenceV3SpikeTests(unittest.TestCase):
             spike.add_observations(self.db, [item], authorizer=self.collector)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM source_record_observations").fetchone()[0], 1)
 
+    def test_revision_hash_uses_normalized_allowlisted_metadata_not_caller_hash(self):
+        rid = self.make_record()
+        first = observation(rid, 3, "a", "2026-01-02T10:00:00Z", source_published_at="2026-01-02T11:00:00+01:00")
+        first["revision_hash"] = "a" * 64
+        second = observation(rid, 4, "a", "2026-01-03T10:00:00Z", source_published_at="2026-01-02T10:00:00Z")
+        second["revision_hash"] = "b" * 64
+        spike.add_observations(self.db, [first, second], authorizer=self.collector)
+        hashes = [row[0] for row in self.db.execute("SELECT revision_hash FROM source_record_observations ORDER BY id")]
+        self.assertEqual(hashes[0], hashes[1])
+        self.assertRegex(hashes[0], r"^[0-9a-f]{64}$")
+
     def test_same_canonical_url_across_providers_is_not_a_unique_source_identity(self):
         gdelt_id = self.make_record()
         govuk_id = spike.add_source_record(
@@ -128,7 +138,7 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         spike.add_observations(self.db, [
             observation(gdelt_id, 3, "d", "2026-01-02T00:00:00Z"),
             {"source_record_id": govuk_id, "source_id": "govuk-news-atom-v1", "ingest_run_id": 1,
-             "revision_hash": "e" * 64, "canonical_url": "https://example.test/synthetic/item",
+             "canonical_url": "https://example.test/synthetic/item",
              "collected_at": "2026-01-01T00:00:00Z", "attribution": "Fictional publisher"},
         ], authorizer=self.collector)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM source_record_observations WHERE canonical_url=?", ("https://example.test/synthetic/item",)).fetchone()[0], 2)
@@ -138,6 +148,9 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         for obs_id in obs_ids:
             spike.add_evidence_proposal(self.db, observation_id=obs_id, event_id=2, claim_key="occurrence", relation="unverified", role="ai")
         self.assertTrue(all(row[0] == "unknown" for row in self.db.execute("SELECT independence_state FROM event_evidence")))
+        owner = spike.synthetic_test_owner_authorizer(self.db)
+        with self.assertRaises(PermissionError):
+            spike.accept_independence(self.db, evidence_id=1, independent=True, rationale="same canonical URL across GDELT and publisher article", authorizer=owner)
 
     def test_invalid_offsets_and_missing_times_are_not_inferred(self):
         for bad in ("2026-01-01T10:00:00+00:99", "2026-01-01T10:00:00+24:00", "2026-01-01T10:00:00"):
@@ -290,6 +303,15 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         self.db.rollback()
         spike.set_incident_validation(self.db, event_id=2, status="valid", rationale="explicit fictional owner decision", authorizer=owner)
         self.assertEqual(self.db.execute("SELECT validation_status FROM events WHERE id=2").fetchone()[0], "valid")
+        with self.assertRaises(PermissionError):
+            spike.accept_classification(self.db, event_id=2, semantic_kind="publication_record", rationale="unsafe reclassification", authorizer=owner)
+        self.assertEqual(spike.legacy_event_semantics(self.db)[1][1:], ("incident_hypothesis", "valid"))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                """INSERT INTO event_semantic_history(event_id,semantic_kind,decision_state,actor_kind,actor_label,decided_at,rationale)
+                   VALUES (2,'publication_record','accepted','synthetic-owner','synthetic-owner-fixture','2026-01-03T00:00:00Z','direct bypass attempt')"""
+            )
+        self.db.rollback()
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("UPDATE event_hypothesis_history SET rationale='rewritten' WHERE event_id=2")
         self.db.rollback()
@@ -305,6 +327,29 @@ class EvidenceV3SpikeTests(unittest.TestCase):
         self.assertEqual(tuple(old), ("proposed","unknown"))
         self.assertEqual(tuple(new), ("accepted","dependent"))
         self.assertEqual(self.db.execute("SELECT supersedes_id FROM event_evidence WHERE id=?", (decision,)).fetchone()[0], evidence)
+
+    def test_independence_rejects_reused_observation(self):
+        owner = spike.synthetic_test_owner_authorizer(self.db)
+        spike.accept_classification(self.db, event_id=2, semantic_kind="incident_hypothesis", rationale="fictional", authorizer=owner)
+        record = self.make_record()
+        obs_a = spike.add_observations(self.db, [observation(record, 3, "a", "2026-01-02T00:00:00Z")], authorizer=self.collector)[0]
+        evidence_a = spike.add_evidence_proposal(self.db, observation_id=obs_a, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        spike.add_evidence_proposal(self.db, observation_id=obs_a, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        with self.assertRaises(PermissionError):
+            spike.accept_independence(self.db, evidence_id=evidence_a, independent=True, rationale="same observation reused", authorizer=owner)
+
+    def test_independence_accepts_demonstrably_distinct_lineage(self):
+        owner = spike.synthetic_test_owner_authorizer(self.db)
+        spike.accept_classification(self.db, event_id=2, semantic_kind="incident_hypothesis", rationale="fictional", authorizer=owner)
+        record = self.make_record()
+        obs_a, obs_b = spike.add_observations(self.db, [
+            observation(record, 3, "a", "2026-01-02T00:00:00Z", canonical_url="https://example.test/synthetic/a"),
+            observation(record, 4, "b", "2026-01-03T00:00:00Z", canonical_url="https://example.test/synthetic/b"),
+        ], authorizer=self.collector)
+        evidence_a = spike.add_evidence_proposal(self.db, observation_id=obs_a, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        evidence_b = spike.add_evidence_proposal(self.db, observation_id=obs_b, event_id=2, claim_key="occurrence", relation="supports", role="ai")
+        accepted = spike.accept_independence(self.db, evidence_id=evidence_a, independent=True, rationale="distinct synthetic observations and URLs reviewed", authorizer=owner)
+        self.assertEqual(self.db.execute("SELECT independence_state FROM event_evidence WHERE id=?", (accepted,)).fetchone()[0], "independent")
 
 
 if __name__ == "__main__":

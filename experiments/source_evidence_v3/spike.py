@@ -11,6 +11,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+import hashlib
+import json
 import re
 import sqlite3
 from typing import Iterable, Iterator, Mapping, Any
@@ -236,6 +238,18 @@ def _create_v3_tables(db: sqlite3.Connection) -> None:
         BEFORE UPDATE ON event_semantic_history BEGIN SELECT RAISE(ABORT, 'semantic history is append-only'); END;
         CREATE TRIGGER trg_semantic_history_no_delete
         BEFORE DELETE ON event_semantic_history BEGIN SELECT RAISE(ABORT, 'semantic history is append-only'); END;
+        CREATE TRIGGER trg_valid_incident_classification_is_sticky
+        BEFORE INSERT ON event_semantic_history
+        WHEN NEW.decision_state = 'accepted'
+          AND NEW.semantic_kind <> 'incident_hypothesis'
+          AND EXISTS (SELECT 1 FROM events WHERE id=NEW.event_id AND validation_status='valid')
+          AND EXISTS (
+            SELECT 1 FROM event_semantic_history h
+            WHERE h.id=(SELECT MAX(h2.id) FROM event_semantic_history h2
+                        WHERE h2.event_id=NEW.event_id AND h2.decision_state='accepted')
+              AND h.semantic_kind='incident_hypothesis'
+          )
+        BEGIN SELECT RAISE(ABORT, 'valid incident classification cannot be withdrawn in this prototype'); END;
         CREATE TRIGGER trg_source_records_no_update
         BEFORE UPDATE ON source_records BEGIN SELECT RAISE(ABORT, 'source record identity is immutable'); END;
         CREATE TRIGGER trg_source_records_no_delete
@@ -385,15 +399,25 @@ def add_observations(
                     parts = urlsplit(candidate_url)
                     if parts.scheme != "https" or parts.hostname != "example.test":
                         raise ValueError(f"{url_field} must use the synthetic example.test domain")
+            normalized = {
+                "canonical_url": item.get("canonical_url"),
+                "title": item.get("title"),
+                "source_published_at": normalize_utc(item.get("source_published_at")),
+                "source_updated_at": normalize_utc(item.get("source_updated_at")),
+                "gdelt_sqldate": normalize_sql_date(item.get("gdelt_sqldate")),
+                "gdelt_dateadded_at": normalize_utc(item.get("gdelt_dateadded_at")),
+                "attribution": item.get("attribution"),
+                "licence_uri": item.get("licence_uri"),
+                "geo_source_fields": item.get("geo_source_fields"),
+            }
+            revision_hash = _revision_hash(normalized)
             values = (
                 int(item["source_record_id"]), item["source_id"], int(item["ingest_run_id"]),
-                item["revision_hash"], item.get("canonical_url"), item.get("title"),
-                normalize_utc(item.get("source_published_at")),
-                normalize_utc(item.get("source_updated_at")),
+                revision_hash, normalized["canonical_url"], normalized["title"],
+                normalized["source_published_at"], normalized["source_updated_at"],
                 normalize_utc(item.get("collected_at"), required=True),
-                normalize_sql_date(item.get("gdelt_sqldate")),
-                normalize_utc(item.get("gdelt_dateadded_at")), item.get("attribution"),
-                item.get("licence_uri"), item.get("geo_source_fields"),
+                normalized["gdelt_sqldate"], normalized["gdelt_dateadded_at"], normalized["attribution"],
+                normalized["licence_uri"], normalized["geo_source_fields"],
             )
             cur = db.execute(
                 """INSERT INTO source_record_observations(
@@ -405,6 +429,14 @@ def add_observations(
             )
             inserted.append(int(cur.lastrowid))
     return inserted
+
+
+def _revision_hash(metadata: Mapping[str, Any]) -> str:
+    """Hash the fixed normalized source-metadata allowlist; collection time is excluded."""
+    canonical = json.dumps(
+        metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def propose_classification(
@@ -439,6 +471,11 @@ def accept_classification(
     if not rationale:
         raise ValueError("owner rationale is required")
     with _atomic(db):
+        current = db.execute("SELECT validation_status FROM events WHERE id=?", (event_id,)).fetchone()
+        if current is None:
+            raise ValueError("unknown event")
+        if current[0] == "valid" and _latest_classification(db, event_id) == "incident_hypothesis" and semantic_kind != "incident_hypothesis":
+            raise PermissionError("valid incident classification cannot be withdrawn in this prototype")
         previous = db.execute(
             "SELECT id FROM event_semantic_history WHERE event_id=? ORDER BY id DESC LIMIT 1", (event_id,)
         ).fetchone()
@@ -514,6 +551,26 @@ def accept_independence(
             raise ValueError("evidence must be linked to an accepted incident hypothesis")
         if _latest_classification(db, prior["event_id"]) != "incident_hypothesis":
             raise PermissionError("event is not an accepted incident hypothesis")
+        if independent:
+            origin = db.execute(
+                """SELECT o.canonical_url FROM source_record_observations o WHERE o.id=?""",
+                (prior["observation_id"],),
+            ).fetchone()
+            if origin is None or not origin[0]:
+                raise PermissionError("independence cannot be approved without a canonical URL")
+            comparators = db.execute(
+                """SELECT e.observation_id,o.canonical_url
+                   FROM event_evidence e JOIN source_record_observations o ON o.id=e.observation_id
+                   WHERE e.event_id=? AND e.claim_key=? AND e.id<>?""",
+                (prior["event_id"], prior["claim_key"], evidence_id),
+            ).fetchall()
+            if not comparators or any(
+                row["observation_id"] == prior["observation_id"]
+                or not row["canonical_url"]
+                or row["canonical_url"] == origin[0]
+                for row in comparators
+            ):
+                raise PermissionError("independence cannot be demonstrated from distinct observations and canonical URLs")
         cur = db.execute(
             """INSERT INTO event_evidence(
                 observation_id,event_id,claim_key,relation,independence_state,decision_state,
