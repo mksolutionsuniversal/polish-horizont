@@ -13,6 +13,13 @@ provenance summary per event/source pair: URL, language, optional observed
 country, current ingest run, and min/max collection times. It is not an article
 catalogue or a history of source records and revisions. Keep these meanings and
 existing read paths intact.
+Importantly, v2 `events` already contains rows with potentially different
+meanings, including GOV.UK publication records as well as candidate incident
+records. Neither the table name nor `validation_status` reliably identifies
+the semantic kind; the current schema has no audited classification field.
+Treat every pre-existing row as **unclassified** until an explicit
+classification is recorded. Do not infer that a legacy row is an incident
+hypothesis or a confirmed incident.
 
 The private data-model draft previously proposed `articles` and
 `event_evidence`. The merged adapters now provide two different record types:
@@ -32,7 +39,7 @@ adapter records do not themselves establish a real-world incident.
 | --- | --- | --- |
 | **A. `articles` + `event_evidence`** (earlier conceptual draft) | Clear publisher-facing article identity; natural place for canonical URL, title, language and publication date. | A GDELT row is an aggregator observation, not an article. It needs another observation entity and a relationship to the article, creating parallel provenance paths and adapter-specific joins. Does not by itself preserve revisions or re-import history. |
 | **B. `source_records` + evidence** | One provider-neutral identity can represent a GOV.UK publication or a GDELT provider observation. Provider IDs and source-specific record types remain explicit. | A simple mutable row loses changed snapshots and replay history. Evidence links also need a versioned observation target and an audit trail. |
-| **C. Minimal additive v3 extension of v2** (**recommended**) | Adopt the generic source-record concept from B; retain v2 tables and add immutable record observations, evidence assertions and hypothesis history. Existing `events` and `event_sources` remain compatible projections. | Adds migration and indexes; read models must deliberately join the new tables. Backfill of existing v2 provenance needs a conservative, explicitly tested rule. |
+| **C. Minimal additive v3 extension of v2** (**recommended**) | Adopt the generic source-record concept from B; retain v2 tables and add immutable record observations, evidence assertions, semantic-classification history and hypothesis history. Existing `events` and `event_sources` remain compatible projections. | Adds migration and indexes; read models must deliberately join the new tables. Backfill of existing v2 provenance needs a conservative, explicitly tested rule. |
 
 Recommend **C**. Do not add a separate `articles` table in v1: a publisher
 article/announcement is a `source_records.record_kind='publication'`; a GDELT
@@ -51,6 +58,7 @@ erDiagram
     INGEST_RUNS ||--o{ SOURCE_RECORD_OBSERVATIONS : records
     SOURCE_RECORD_OBSERVATIONS ||--o{ EVENT_EVIDENCE : supports_or_contradicts
     EVENTS ||--o{ EVENT_EVIDENCE : hypothesis_claim
+    EVENTS ||--o{ EVENT_SEMANTIC_HISTORY : classified_by
     EVENTS ||--o{ EVENT_HYPOTHESIS_HISTORY : reviewed_as
 ```
 
@@ -63,9 +71,16 @@ erDiagram
   event happened.
 - **Provider observation:** a provider-native item such as a GDELT Events row.
   It records what that provider emitted, not the truth of the row's claims.
-- **Event hypothesis:** a proposed real-world incident, represented by the
-  existing `events` row for compatibility. Until independently reviewed it
-  remains `pending`; the table name does not imply confirmation.
+- **Event row:** a v2 `events` row whose semantic kind is not encoded by the
+  current schema. It may represent a publication, an incident candidate, or
+  another legacy meaning. For newly modeled data, publications belong in
+  `source_records`; do not create a new `events` row merely to store an article.
+- **Event hypothesis:** a proposed real-world incident represented by an
+  `events` row only when an explicit classification-history entry says
+  `incident_hypothesis`. Only the latest accepted, audited classification is
+  effective; proposed or rejected classifications remain history. Until a
+  separately authorized, audited decision changes its review state, the
+  hypothesis remains pending; classification does not confirm occurrence.
 - **Evidence assertion:** a versioned relation from one source-record
   observation to one hypothesis and one named claim (for example, occurrence
   date or location). Relation values are `supports`, `contradicts`, or
@@ -80,17 +95,20 @@ erDiagram
   unknown, it is not counted as independent. A claim is never auto-confirmed
   by item count or a score.
 
-The history table records explicit review decisions, including who/what made
+The history tables record explicit review decisions, including who/what made
 the decision, when, rationale, the resulting state, and the previous history
-entry. `events.validation_status` remains a current compatibility projection:
-only an explicit, audited decision can change `pending` to `valid` or `invalid`.
-Automated ingestion can add observations and pending evidence; it cannot
-confirm an incident.
+entry. `events.validation_status` remains a current compatibility projection
+for existing consumers; it is not a semantic classifier or independent
+verification. Its `valid` value must not be interpreted as “confirmed real
+incident.” Automated ingestion can add observations and pending evidence; it
+cannot classify a legacy event as an incident or confirm an incident.
 
 ## Proposed schema-v3 dictionary (conceptual only)
 
 No SQL from this section is migration-ready. Exact names, constraints, and
-storage encodings require review in the implementation issue.
+storage encodings require review in the implementation issue. The DDL snippets
+below make required SQLite key/index syntax explicit for review; they do not
+authorize a migration.
 
 | Entity / field | Meaning and proposed constraint |
 | --- | --- |
@@ -109,35 +127,71 @@ storage encodings require review in the implementation issue.
 | `rights_snapshot` | Per-observation license identifier/URI, provider/publisher attribution, canonical source link and rights note. Do not assume all linked media or third-party works share the publisher's licence. |
 | `first_seen_at`, `last_seen_at` | Derived as `MIN`/`MAX` of immutable observation `collected_at` values for a record. They are not event or publication times and must be correct under out-of-order imports. |
 | `event_evidence` | Append-only link to an observation and `events.id`, plus `claim_key`, `supports`/`contradicts`/`unverified`, evidence kind, review state, independence group/state, reviewer, decision time/rationale and optional superseded evidence ID. Reassessment appends a row; it does not rewrite the old assertion. |
-| `event_hypothesis_history` | Append-only snapshots of hypothesis fields/state and explicit human decision metadata. Current `events` fields remain the read projection; every confirmed/rejected transition needs a history entry. |
+| `event_semantic_history` | Append-only classification decisions for an `events.id`: `publication_record`, `incident_hypothesis`, or `other_or_unknown`, with actor, timestamp, rationale, review state, and superseded history ID. No history row means `unclassified`; legacy rows are never defaulted to `incident_hypothesis`. A semantic decision cannot by itself confirm occurrence. |
+| `event_hypothesis_history` | Append-only snapshots only for rows whose latest accepted semantic classification is `incident_hypothesis`; include explicit human decision metadata. Current `events` fields remain the read projection; every confirmed/rejected transition needs a history entry. |
 
 `event_sources` remains the v2 current summary for backwards compatibility. New
 source-record history does not replace or reinterpret its `(event_id,
-source_id)` semantics. Existing `events` are treated as hypotheses, not
-automatically promoted incidents. A migration may not invent Atom IDs, GDELT
-IDs, publication times, coordinates, ISO countries, or exact sighting times.
+source_id)` semantics. Existing `events` are treated as unclassified until
+audited classification history says otherwise. Migration must not auto-label
+them as incident hypotheses or confirmed incidents. A migration may not
+invent Atom IDs, GDELT IDs, publication times, coordinates, ISO countries, or
+exact sighting times.
 
 ### Constraint and index sketch
 
 ```text
 source_records:
   CHECK ((provider_namespace IS NULL) = (external_record_id IS NULL))
-  UNIQUE(source_id, provider_namespace, external_record_id) WHERE external_record_id IS NOT NULL
   -- NULL IDs are for explicitly labelled legacy provenance only.
 
+-- Partial uniqueness is expressed as an index, not a table UNIQUE clause:
+CREATE UNIQUE INDEX uq_source_records_provider_identity
+  ON source_records(source_id, provider_namespace, external_record_id)
+  WHERE external_record_id IS NOT NULL;
+
 source_record_observations:
-  FK(source_record_id, source_id) -> source_records(id, source_id)
-  FK(ingest_run_id, source_id) -> ingest_runs(id, source_id)
+  -- Each composite parent key must be PRIMARY KEY or covered by a matching
+  -- full UNIQUE constraint/index, even though id alone is already a primary key.
+  source_records: UNIQUE(id, source_id)
+  ingest_runs: UNIQUE(id, source_id)
+  FOREIGN KEY(source_record_id, source_id)
+    REFERENCES source_records(id, source_id)
+  FOREIGN KEY(ingest_run_id, source_id)
+    REFERENCES ingest_runs(id, source_id)
   UNIQUE(source_record_id, ingest_run_id, revision_hash)
   CHECK(collected_at is valid normalized UTC)
 
 event_evidence:
   FK(observation_id) -> source_record_observations(id)
   FK(event_id) -> events(id)
+  -- Writer transaction (or reviewed trigger) must reject evidence links unless
+  -- the event's latest accepted semantic classification is incident_hypothesis.
   CHECK(relation IN ('supports', 'contradicts', 'unverified'))
   CHECK(independence_state IN ('independent', 'dependent', 'unknown'))
   -- A correction inserts a superseding row; the prior assertion is retained.
+
+event_semantic_history:
+  FK(event_id) -> events(id)
+  CHECK(semantic_kind IN ('publication_record', 'incident_hypothesis',
+                          'other_or_unknown'))
+  -- No accepted decision means unclassified; decisions require actor, time,
+  -- rationale, decision status, and optional supersedes link.
 ```
+
+SQLite does not permit a partial index to serve as the parent key of a foreign
+key. Composite references above therefore require matching full unique parent
+keys such as `UNIQUE(id, source_id)` on **both** parent tables, even if `id`
+alone is already a primary key. A partial unique index is not a substitute.
+SQLite partial uniqueness uses `CREATE UNIQUE INDEX name ON table(columns...)
+WHERE predicate;`; the predicate belongs to the index statement, not a
+table-level `UNIQUE(...) WHERE ...` clause. The exact DDL must be validated on
+the supported SQLite version with synthetic databases before migration.
+Because SQLite cannot express the cross-table “latest accepted classification”
+rule with a `CHECK`, evidence insertion must enforce that precondition in one
+transaction or with a carefully tested trigger; it must fail closed for
+unclassified, publication, and other/unknown rows. The chosen enforcement is
+an implementation decision, not part of this proposal's authorization.
 
 Candidate indexes: unique provider identity above; observation history on
 `(source_record_id, collected_at, id)` and `(source_id, ingest_run_id)`;
@@ -220,13 +274,17 @@ separate implementation issue and PR must:
 2. Add migration 3 as additive DDL only. Preserve `events`, `event_sources`,
    existing IDs, indexes and query contracts. Apply the DDL and migration
    marker in one explicit transaction, with foreign keys/checks and indexes.
-3. Preserve old `event_sources` exactly and do not automatically backfill it
-   into source-record evidence during schema migration. Existing v2 rows remain
-   accessible through the current tables/read contract. If a later approved
-   report needs legacy rows in the new model, handle that in a separate
-   deterministic conversion: label them `legacy_provenance`, leave external
-   provider IDs null, preserve only known aggregate first/last bounds, and do
-   not treat them as independent evidence. No guessed mapping is acceptable.
+3. Preserve old `event_sources` and `events` exactly; do not automatically
+   backfill them into source-record evidence or assign event semantics during
+   schema migration. Existing v2 rows remain accessible through the current
+   tables/read contract but are unclassified in new semantic-aware views. If
+   a later approved report needs legacy rows in the new model, handle that in
+   a separate deterministic conversion: label provenance `legacy_provenance`,
+   leave external provider IDs null, preserve only known aggregate first/last
+   bounds, and do not treat it as independent evidence. A row may be classified
+   as a publication or incident hypothesis only through a separate explicit,
+   auditable review decision; it must never be auto-promoted to confirmed
+   incident. No guessed mapping is acceptable.
 4. Test migration from a newly created synthetic v2 database and v2-shaped
    sample fixtures first, then v2→v3 integrity, foreign-key and index
    validation. Run interrupted-DDL rollback/retry, idempotency, replay and
@@ -256,6 +314,7 @@ SQLite databases and cover:
 | Identity / dedup | Same provider namespace + external ID replay; same ID in another namespace; duplicate canonical URL across providers; missing external ID without a guessed collision. |
 | Revisions / history | Unchanged replay across runs; changed metadata revision; out-of-order backfill after a newer observation; deterministic current projection and first/last seen; no lost earlier revision. |
 | Evidence / conflict | One observation to zero/one/multiple hypotheses; multiple observations per hypothesis; `supports` and `contradicts` coexist for one claim; superseded assessment remains in history. |
+| Legacy semantics | A synthetic v2 fixture contains a GOV.UK publication row and an incident candidate in `events`; after additive migration both rows remain unchanged and have no semantic-history row, both read as `unclassified`, and neither appears as a confirmed incident. Only an explicit reviewed history entry can classify either; classification alone still does not confirm occurrence. |
 | Independence | GDELT record and its cited publisher URL share lineage; same syndicated article group does not double count; unknown lineage is excluded from independent count; genuinely independent synthetic source groups remain distinct. |
 | Time / nulls | GDELT `SQLDATE` remains a date; `DATEADDED`, Atom published/updated and collected times remain separate UTC values; missing values stay `NULL`; invalid offsets rejected; no inferred `occurred_at`. |
 | Geography | Type-zero/empty GDELT geo stays unknown; raw FIPS/ADM values remain candidates; FIPS is not ISO event country; no invented coordinates or GOV.UK jurisdiction-derived location. |
@@ -282,6 +341,9 @@ separately approved implementation exists.
    before any GDELT staging/live parser or writer.
 6. Decide whether `event_sources` remains a permanent compatibility summary
    or is deprecated only after all consumers have an approved replacement.
+7. Approve the semantic vocabulary and review workflow for classifying
+   existing `events` rows, including who may record a classification and how
+   semantic-aware read views handle unclassified records.
 
 Until these questions are resolved, this is a design recommendation only: no
 schema version change, code change, live feed, real data, database write,
