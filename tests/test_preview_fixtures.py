@@ -124,6 +124,18 @@ class PreviewFixtureTests(unittest.TestCase):
         self.assertRegex(rules, r"\.filter-field input\[type=\"datetime-local\"\]\s*\{[^}]*font-size:\s*16px")
         self.assertRegex(rules, r"\.reset-button\s*\{[^}]*min-height:\s*44px")
 
+    def test_narrow_mobile_date_filters_use_single_bounded_column(self):
+        narrow = re.search(r"@media \(max-width: 480px\) \{(.*?)\n\}", self.styles, re.S)
+        self.assertIsNotNone(narrow)
+        rules = narrow.group(1)
+        self.assertRegex(rules, r"\.filters\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)")
+        date_input = re.search(r"\.filter-field input\[type=\"datetime-local\"\]\s*\{([^}]*)\}", rules)
+        self.assertIsNotNone(date_input)
+        self.assertIn("width: 100%", date_input.group(1))
+        self.assertIn("min-width: 0", date_input.group(1))
+        self.assertIn("max-width: 100%", date_input.group(1))
+        self.assertIn("box-sizing: border-box", date_input.group(1))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -182,6 +182,12 @@ h2 { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 620; letter-spac
   .validation-pill { font-size: 7px; }
   .footer { flex-wrap: wrap; font-size: 7px; }
 }
+@media (max-width: 480px) {
+  .filters { grid-template-columns: minmax(0, 1fr); }
+  .filter-field, .filter-field:first-child { min-width: 0; grid-column: auto; }
+  .filter-field input[type="datetime-local"] { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+  .reset-button { grid-column: auto; }
+}
 @media (prefers-reduced-motion: no-preference) {
   .panel { animation: arrive .35s ease-out both; }
   @keyframes arrive { from { opacity: .4; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
