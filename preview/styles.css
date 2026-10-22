@@ -168,16 +168,25 @@ h2 { margin: 0; font-size: 19px; line-height: 1.2; font-weight: 620; letter-spac
   .notice { padding: 12px; }
   .notice p { font-size: 10px; }
   .timeline-panel, .source-panel { padding: 16px 13px; }
+  .filter-field select, .filter-field input { min-height: 44px; font-size: 14px; }
+  .filter-field input[type="datetime-local"] { font-size: 16px; }
   .filters { grid-template-columns: 1fr 1fr; gap: 10px; padding: 11px; }
   .filter-field:first-child { grid-column: 1 / -1; }
-  .reset-button { grid-column: 1 / -1; }
-  .timestamp-grid { gap: 6px; padding: 8px 6px; }
-  .timestamp-label { font-size: 6px; letter-spacing: .06em; }
-  .timestamp-value { font-size: 8px; }
+  .reset-button { grid-column: 1 / -1; min-height: 44px; }
+  .timestamp-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 9px; }
+  .timestamp-row { grid-template-columns: minmax(78px, .36fr) minmax(0, 1fr); align-items: baseline; gap: 8px; }
+  .timestamp-label { font-size: 9px; letter-spacing: .06em; }
+  .timestamp-value { overflow: visible; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
   .event-card { gap: 11px; }
   .event-head { align-items: flex-start; }
   .validation-pill { font-size: 7px; }
   .footer { flex-wrap: wrap; font-size: 7px; }
+}
+@media (max-width: 480px) {
+  .filters { grid-template-columns: minmax(0, 1fr); }
+  .filter-field, .filter-field:first-child { min-width: 0; grid-column: auto; }
+  .filter-field input[type="datetime-local"] { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+  .reset-button { grid-column: auto; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .panel { animation: arrive .35s ease-out both; }

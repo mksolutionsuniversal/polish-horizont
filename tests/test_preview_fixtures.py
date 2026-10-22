@@ -3,6 +3,7 @@
 from datetime import datetime
 from html.parser import HTMLParser
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -46,6 +47,7 @@ class PreviewFixtureTests(unittest.TestCase):
     def setUpClass(cls):
         cls.html = (PREVIEW / "index.html").read_text(encoding="utf-8")
         cls.script = (PREVIEW / "app.js").read_text(encoding="utf-8")
+        cls.styles = (PREVIEW / "styles.css").read_text(encoding="utf-8")
         cls.fixtures = read_fixtures()
 
     def test_data_is_explicitly_synthetic_with_bilingual_uk_and_pl_examples(self):
@@ -110,6 +112,29 @@ class PreviewFixtureTests(unittest.TestCase):
         self.assertIn('src="app.js"', self.html)
         self.assertNotRegex(self.html, r"(?:src|href)=['\"]https?://")
         self.assertNotRegex(self.script, r"\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(")
+
+    def test_mobile_css_keeps_utc_timestamps_unclipped_and_controls_readable(self):
+        mobile = re.search(r"@media \(max-width: 640px\) \{(.*?)\n\}", self.styles, re.S)
+        self.assertIsNotNone(mobile)
+        rules = mobile.group(1)
+        self.assertRegex(rules, r"\.timestamp-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)")
+        self.assertRegex(rules, r"\.timestamp-value\s*\{[^}]*overflow:\s*visible")
+        self.assertRegex(rules, r"\.timestamp-value\s*\{[^}]*text-overflow:\s*clip")
+        self.assertRegex(rules, r"\.timestamp-value\s*\{[^}]*white-space:\s*normal")
+        self.assertRegex(rules, r"\.filter-field input\[type=\"datetime-local\"\]\s*\{[^}]*font-size:\s*16px")
+        self.assertRegex(rules, r"\.reset-button\s*\{[^}]*min-height:\s*44px")
+
+    def test_narrow_mobile_date_filters_use_single_bounded_column(self):
+        narrow = re.search(r"@media \(max-width: 480px\) \{(.*?)\n\}", self.styles, re.S)
+        self.assertIsNotNone(narrow)
+        rules = narrow.group(1)
+        self.assertRegex(rules, r"\.filters\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)")
+        date_input = re.search(r"\.filter-field input\[type=\"datetime-local\"\]\s*\{([^}]*)\}", rules)
+        self.assertIsNotNone(date_input)
+        self.assertIn("width: 100%", date_input.group(1))
+        self.assertIn("min-width: 0", date_input.group(1))
+        self.assertIn("max-width: 100%", date_input.group(1))
+        self.assertIn("box-sizing: border-box", date_input.group(1))
 
 
 if __name__ == "__main__":
