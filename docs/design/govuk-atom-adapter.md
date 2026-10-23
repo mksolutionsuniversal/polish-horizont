@@ -90,9 +90,53 @@ unsupported live fields/URLs/timestamp variants beyond the original
 approval and separate isolated gate would be necessary for another live
 compatibility check. This change does not enable fetching or scheduling.
 
+## Follow-up live parser gate #59 (2026-10-23)
+
+The owner's separately authorized **one-shot** GitHub Actions run 39987663445
+received a second actual GOV.UK Atom response: HTTP 200,
+`application/atom+xml`, 12,134 bytes, 20 entries. The merged parser accepted
+20/20 items in RAM, with `pending` validation, unknown event occurrence, and
+unknown geography. No real data was imported or stored. The temporary workflow
+was removed. This is **one real-feed snapshot only**, not ongoing availability,
+continuous collection authorization or confirmation of the announcements.
+
+## Proposed one-shot transport (Issue #60; not activated)
+
+The standalone `src/horizont/adapters/govuk_atom_collector.py` module adds
+`collect_once(collected_at=..., permit_network=True)`. Importing it or calling
+it without explicit opt-in performs **zero HTTP requests**. The module is not
+imported by any live service, CLI, scheduler, cron, Docker Compose or pipeline.
+This PR includes no live requests and its tests use fake in-memory responses
+only.
+
+The collector asks for a single immutable official Atom URL over HTTPS using
+the Python standard library: default verified TLS, ambient proxy bypass,
+HTTP redirects rejected, and *no retries*, including for HTTP 429. It requests
+`application/atom+xml`, identity encoding, uses a short socket timeout and
+requires exactly HTTP 200, exact response URL, Atom media type, acceptable
+Content-Length and a complete, bounded body of at most 128 KiB. The reader
+takes at most 128 KiB + 1 byte once to detect over-size, then calls existing
+`parse_feed`. It returns a `PublicationFeed` object in memory. It neither
+dereferences article URLs nor calls `ingest_payload` or changes SQLite.
+
+Failures use short, fixed reason categories; raw XML, real article titles,
+URLs, response headers and credentials are never used in exception text.
+Testing covers synthetic 20-entry acceptance/21-entry rejection, empty/missing
+Content-Length, HTTP errors and redirects, unexpected URL or media type,
+compression, over-large/truncated payload, invalid date and unsafe XML.
+
+**Outstanding operator gates:** (1) the opt-in flag is only an accidental-call
+guard, not actual authorization; (2) the HTTP socket timeout is **not** a hard
+end-to-end wall-clock deadline against slowly dripping responses. Any real
+scheduled or host-based use must first add an isolated process-level deadline,
+bounded rate/schedule, runtime log review, source-licence attribution policy,
+explicit owner go/no-go, and separate persistence approval. No new provider
+GET is authorized by this PR. No application-wide import/wiring/deployment.
+
 ## MVP limitations
 
-- No live feed fetch, retry policy, scheduling, or response transport.
+- The parser remains offline; the opt-in one-shot transport is separate and not enabled.
+- No active provider polls, scheduling, API/UI wiring, host deployment or live SQLite import.
 - No HTML/body extraction, language detection, country assignment or
   geolocation.
 - Atom `updated` and `id` are not persisted by the current SQLite schema.
