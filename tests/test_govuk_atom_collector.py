@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from email.message import Message
+import http.client
 from pathlib import Path
 from unittest import TestCase, mock
 import sys
@@ -164,6 +165,22 @@ class GOVUKAtomCollectorTests(TestCase):
         self.assertEqual(actual.reason, "transport_error")
         self.assertNotIn("secret", str(actual))
         self.assertEqual(len(opener.calls), 1)
+
+    def test_protocol_parsing_exceptions_are_sanitized_without_retries(self):
+        # urllib can surface these directly, without wrapping them in URLError.
+        # Never expose a malformed status line or partial body via str(error).
+        protocol_failures = (
+            http.client.BadStatusLine("secret-bearing invalid status line"),
+            http.client.IncompleteRead(b"secret-bearing partial XML", 23),
+            http.client.LineTooLong("secret-bearing oversized header"),
+        )
+        for failure in protocol_failures:
+            with self.subTest(type=type(failure).__name__):
+                actual, opener = self._exercise(failure)
+                self.assertIsInstance(actual, collector.GOVUKCollectorError)
+                self.assertEqual(actual.reason, "transport_error")
+                self.assertNotIn("secret-bearing", str(actual))
+                self.assertEqual(len(opener.calls), 1)
 
     def test_http_status_and_final_url_rejection_precede_body_read(self):
         cases = [
