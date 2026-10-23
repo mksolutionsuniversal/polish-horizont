@@ -8,7 +8,7 @@ third-party dependency, or feed fixture containing a real article. The fixture
 uses fictional text and `example.test`. A future collector needs its own review
 and authorization; this adapter does not download anything.
 
-The parser accepts at most 128 KiB and 10 entries. It requires the Atom 1.0
+The parser accepts at most 128 KiB and 20 entries. It requires the Atom 1.0
 namespace and feed metadata, rejects DTD/entity declarations, malformed XML,
 unsafe article URLs, duplicate Atom IDs, titles or canonical URLs, and invalid
 timestamps. It only accepts HTTPS links on `www.gov.uk` or the synthetic test
@@ -66,6 +66,29 @@ References:
 - [GOV.UK terms and conditions](https://www.gov.uk/help/terms-conditions)
 - [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/)
 - [The National Archives attribution guidance](https://www.nationalarchives.gov.uk/information-management/re-using-public-sector-information/uk-government-licensing-framework/open-government-licence/copyright-notices-attribution-statements/)
+
+## Real-feed one-shot observation (2026-10-23)
+
+A separately approved single HTTPS GET from an isolated GitHub Actions runner
+returned HTTP 200, `application/atom+xml`, 12,531 response bytes and **20 Atom
+entries**, with an Atom 1.0 feed root and feed-level id/title/updated elements
+present. The approved request had no redirects/retries/proxies and did not
+persist live XML or titles. The original 10-entry limit correctly rejected
+that entire response. See Issue #56 and the read-only format report in run
+39970594333 (GitHub Actions). The temporary workflow was removed after the run.
+
+This isolated offline-only adjustment raises the *strict whole-feed bound*
+to **20**, leaving the XML byte cap (128 KiB), URL restrictions, and failure
+semantics unchanged. Synthetic tests prove 20 unique entries are parsed and
+imported without silent truncation, while 21 entries fail closed and do not
+change persisted event counts.
+
+**Do not claim full real-feed compatibility** from the observed response:
+the runtime did not retain the real body, and the parser may have other
+unsupported live fields/URLs/timestamp variants beyond the original
+10-entry rejection. Never silently take only the first ten. A new explicit
+approval and separate isolated gate would be necessary for another live
+compatibility check. This change does not enable fetching or scheduling.
 
 ## MVP limitations
 

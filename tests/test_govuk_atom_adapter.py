@@ -88,6 +88,34 @@ class GOVUKAtomAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(GOVUKAtomError, "collected_at"):
             parse_feed(feed(""), collected_at="2026-10-21T10:00:00")
 
+    def test_observed_twenty_entries_are_not_truncated_and_twenty_one_fail_closed(self):
+        # A one-shot GOV.UK Atom response on 2026-10-23 contained 20 entries.
+        # These are entirely synthetic example.test URLs, not captured live data.
+        self.assertEqual(MAX_ENTRIES, 20)
+        accepted = "".join(
+            entry(str(i), f"Synthetic publication {i}", f"https://example.test/notices/{i}")
+            for i in range(20)
+        )
+        batch = parse_feed(feed(accepted), collected_at=COLLECTED)
+        self.assertEqual(len(batch.publications), 20)
+        self.assertEqual(len({p.original_url for p in batch.publications}), 20)
+        self.assertTrue(all(p.validation_status == "pending" and p.occurred_at is None
+                            and p.geo_precision == "unknown" for p in batch.publications))
+
+        result = ingest_payload(self.connection, feed(accepted), collected_at=COLLECTED)
+        self.assertEqual((result.status, result.items_seen, result.items_inserted), ("ok", 20, 20))
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM events").fetchone()[0], 20)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM event_sources").fetchone()[0], 20)
+
+        excess = accepted + entry("20", "Synthetic publication 20",
+                                  "https://example.test/notices/20")
+        with self.assertRaisesRegex(GOVUKAtomError, "feed exceeds 20 entries"):
+            parse_feed(feed(excess), collected_at=COLLECTED)
+        with self.assertRaisesRegex(GOVUKAtomError, "feed exceeds 20 entries"):
+            ingest_payload(self.connection, feed(excess), collected_at=COLLECTED)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM events").fetchone()[0], 20)
+        self.assertEqual(self.connection.execute("SELECT status FROM ingest_runs ORDER BY id DESC LIMIT 1").fetchone()[0], "failed")
+
     def test_rejects_invalid_offset_components_in_every_atom_timestamp(self):
         invalid_offsets = ("+00:99", "-10:90", "+24:00", "+00:60")
         for offset in invalid_offsets:
