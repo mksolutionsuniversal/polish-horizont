@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from email.message import Message
+import http.client
 import re
 import ssl
 import urllib.error
