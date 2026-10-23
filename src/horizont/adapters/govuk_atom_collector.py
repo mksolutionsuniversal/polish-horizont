@@ -120,7 +120,8 @@ def collect_once(
     except urllib.error.HTTPError:
         # Includes 3xx (redirects refused) and 429; never retry.
         raise GOVUKCollectorError("http_error_or_redirect") from None
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError, TypeError, AttributeError):
+    except (http.client.HTTPException, urllib.error.URLError, OSError, TimeoutError,
+            ValueError, TypeError, AttributeError):
         # Do not echo transport exceptions (they may contain URLs or headers).
         raise GOVUKCollectorError("transport_error") from None
 
